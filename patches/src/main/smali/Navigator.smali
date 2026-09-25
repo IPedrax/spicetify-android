@@ -20,7 +20,7 @@
     move-result v0
     if-eqz v0, :delegate
     iget-object v0, p0, Lapp/spicetify/extension/spotify/settings/nativebridge/Navigator;->activity:Landroid/app/Activity;
-    invoke-static {v0}, Lapp/spicetify/extension/spotify/settings/SpicetifySettingsActivity;->open(Landroid/app/Activity;)V
+    invoke-static {v0}, Lapp/spicetify/extension/spotify/settings/SpicetifySettingsScreen;->open(Landroid/app/Activity;)V
     return-void
     :delegate
     iget-object v0, p0, Lapp/spicetify/extension/spotify/settings/nativebridge/Navigator;->delegate:Lp/tyh0;
