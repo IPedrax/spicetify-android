@@ -6,6 +6,7 @@ import static org.junit.Assert.assertTrue;
 import static org.junit.Assert.fail;
 
 import java.util.Arrays;
+import java.util.Collections;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
@@ -43,27 +44,75 @@ public class SpicetifyThemeTest {
     }
 
     @Test
-    public void acceptsHashAarrggbbButNotBareEightDigits() {
+    public void readsEightDigitsLikeTheCli() {
         assertEquals(Integer.valueOf(0x80FFFFFF), SpicetifyTheme.parse("[a]\nshadow = #80FFFFFF").get(0).colors.get("shadow"));
-        failsWith("[a]\nshadow = 80FFFFFF", "Line 2: shadow");
+        // The CLI keeps the first six digits of a bare run and drops the rest.
+        assertEquals(Integer.valueOf(0xFF80FFFF), SpicetifyTheme.parse("[a]\nshadow = 80FFFFFF").get(0).colors.get("shadow"));
+        assertEquals(Integer.valueOf(0xFF000000), SpicetifyTheme.parse("[a]\nmain = 00000000").get(0).colors.get("main"));
     }
 
     @Test
-    public void rejectsValuesThePhoneCantUse() {
-        for (String value : new String[] {"${xrdb:color0}", "${HOME}", "red", "50,80,120", "#12345", "rgb(1,2,3)"}) {
-            failsWith("[a]\nmain = " + value, "Line 2: main");
+    public void readsDecimalsIgnoringSpacesAroundChannels() {
+        // The CLI doesn't trim channels, so it reads " 80" as 255; trimming keeps the color the author meant.
+        assertEquals(Integer.valueOf(0xFF325078), SpicetifyTheme.parse("[a]\nmain = 50, 80,120").get(0).colors.get("main"));
+    }
+
+    @Test
+    public void skipsValuesThePhoneCantUse() {
+        for (String value : new String[] {"${xrdb:color0}", "${HOME}", "red", "#12345", "rgb(1,2,3)", "fe", "300,0,0"}) {
+            Map<String, Integer> colors = SpicetifyTheme.parse("[a]\nmain = " + value + "\ntext = ffffff").get(0).colors;
+            assertEquals(value, Collections.singletonMap("text", 0xFFFFFFFF), colors);
         }
     }
 
     @Test
-    public void rejectsALineWithoutDelimiterAndAFileWithoutSections() {
-        failsWith("[a]\njust text", "Line 2:");
+    public void endsValuesAtCommentsLikeGoIni() {
+        Map<String, Integer> colors = SpicetifyTheme.parse("[a]\n"
+                + "text = FFFFFF; Main field text; playlist names\n"
+                + "dark-border = 1D1D1D;\n"
+                + "main = 121212 #dark\n"
+                + "button = #1db954").get(0).colors;
+        assertEquals(Integer.valueOf(0xFFFFFFFF), colors.get("text"));
+        assertEquals(Integer.valueOf(0xFF1D1D1D), colors.get("dark-border"));
+        assertEquals(Integer.valueOf(0xFF121212), colors.get("main"));
+        assertEquals(Integer.valueOf(0xFF1DB954), colors.get("button"));
+    }
+
+    @Test
+    public void skipsLinesWithoutADelimiterButNeedsASection() {
+        assertEquals(Collections.singletonMap("main", 0xFF000000),
+                SpicetifyTheme.parse("[a]\njust text\nmain = 000000").get(0).colors);
         failsWith("; nothing here", "No color schemes found");
     }
 
     @Test
-    public void rejectsAnEmptySectionName() {
-        failsWith("[]\nmain = 000000", "Line 1: empty section name");
+    public void skipsEmptyOrUnclosedSections() {
+        List<SpicetifyTheme.Scheme> schemes = SpicetifyTheme.parse("[]\nmain = 000000\n[a\ntext = fff\n[b]\ntext = 000");
+        assertEquals(1, schemes.size());
+        assertEquals("b", schemes.get(0).name);
+        assertEquals(Collections.singletonMap("text", 0xFF000000), schemes.get(0).colors);
+    }
+
+    @Test
+    public void skipsALeadingByteOrderMarkLikeGoIni() {
+        List<SpicetifyTheme.Scheme> schemes = SpicetifyTheme.parse("\ufeff[Dark]\nmain = 000000");
+        assertEquals("dark", schemes.get(0).name);
+        assertEquals(Collections.singletonMap("main", 0xFF000000), schemes.get(0).colors);
+    }
+
+    @Test
+    public void endsASectionNameAtTheLastBracketLikeGoIni() {
+        List<SpicetifyTheme.Scheme> schemes = SpicetifyTheme.parse("[Dark] ; note\nmain = 000000\n[a]b] extra\ntext = fff");
+        assertEquals("dark", schemes.get(0).name);
+        assertEquals(Collections.singletonMap("main", 0xFF000000), schemes.get(0).colors);
+        assertEquals("a]b", schemes.get(1).name);
+    }
+
+    @Test
+    public void keepsSchemesWhoseKeysWereAllSkipped() {
+        List<SpicetifyTheme.Scheme> schemes = SpicetifyTheme.parse("[xrdb]\nmain = ${xrdb:color0}\n[dark]\nmain = 000");
+        assertEquals(2, schemes.size());
+        assertTrue(schemes.get(0).colors.isEmpty());
     }
 
     @Test

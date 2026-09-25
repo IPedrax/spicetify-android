@@ -9,7 +9,7 @@ import java.util.Map;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
-/** Parses Spicetify themes: {@code color.ini} as the Spicetify CLI reads it, or CSS {@code --spice-*} variables. */
+/** Parses Spicetify themes: {@code color.ini} as desktop Spicetify reads it, or CSS {@code --spice-*} variables. */
 public final class SpicetifyTheme {
     public static final class Scheme {
         public final String name;
@@ -21,7 +21,8 @@ public final class SpicetifyTheme {
         }
     }
 
-    private static final Pattern INLINE_COMMENT = Pattern.compile("\\s[;#]");
+    private static final Pattern HEX_RUN = Pattern.compile("[0-9a-fA-F]+");
+    private static final Pattern DECIMAL = Pattern.compile("\\d{1,3}");
     private static final Pattern SPICE = Pattern.compile("--spice-([A-Za-z0-9-]+)\\s*:\\s*([^;}]+)");
     private static final Pattern RGB = Pattern.compile(
             "rgba?\\(\\s*(\\d{1,3})\\s*,\\s*(\\d{1,3})\\s*,\\s*(\\d{1,3})\\s*(?:,\\s*(\\d*\\.?\\d+)\\s*)?\\)");
@@ -33,41 +34,30 @@ public final class SpicetifyTheme {
         return parseColorIni(text);
     }
 
-    /** Case-insensitive names, {@code =} or {@code :}, {@code ;} and {@code #} comments; keys before a section are skipped. */
+    /**
+     * Reads color.ini the way desktop Spicetify does (the CLI's go-ini and ParseColor, and
+     * Marketplace's own reader): case-insensitive names, "=" or ":", comment lines starting with
+     * ";" or "#", a section name that ends at the last "]", and a value that ends at ";" or at a
+     * "#" after its first character. A leading byte order mark is ignored. Lines that don't parse
+     * and values a phone can't use are skipped, never guessed.
+     */
     static List<Scheme> parseColorIni(String text) {
         Map<String, Map<String, Integer>> schemes = new LinkedHashMap<>();
         Map<String, Integer> current = null;
-        String[] lines = text.split("\r?\n", -1);
-        for (int i = 0; i < lines.length; i++) {
-            int number = i + 1;
-            String line = lines[i].trim();
+        String body = text.startsWith("\ufeff") ? text.substring(1) : text;
+        for (String raw : body.split("\r?\n", -1)) {
+            String line = raw.trim();
             if (line.isEmpty() || line.startsWith(";") || line.startsWith("#")) continue;
             if (line.startsWith("[")) {
-                if (!line.endsWith("]")) throw new ThemeException("Line " + number + ": unclosed section header");
-                String name = line.substring(1, line.length() - 1).trim().toLowerCase(Locale.ROOT);
-                if (name.isEmpty()) throw new ThemeException("Line " + number + ": empty section name");
-                current = schemes.get(name);
-                if (current == null) {
-                    current = new LinkedHashMap<>();
-                    schemes.put(name, current);
-                }
+                int end = line.lastIndexOf(']');
+                String name = end < 0 ? "" : line.substring(1, end).trim().toLowerCase(Locale.ROOT);
+                current = name.isEmpty() ? null : schemes.computeIfAbsent(name, ignored -> new LinkedHashMap<>());
                 continue;
             }
-            int delimiter = -1;
-            for (int c = 0; c < line.length(); c++) {
-                if (line.charAt(c) == '=' || line.charAt(c) == ':') {
-                    delimiter = c;
-                    break;
-                }
-            }
-            if (delimiter < 1) throw new ThemeException("Line " + number + ": expected \"key = value\"");
-            if (current == null) continue;
-            String key = line.substring(0, delimiter).trim().toLowerCase(Locale.ROOT);
-            // Trimmed before the comment search, as go-ini does, so a value like "#cba6f7" is kept.
-            String value = line.substring(delimiter + 1).trim();
-            Matcher comment = INLINE_COMMENT.matcher(value);
-            if (comment.find()) value = value.substring(0, comment.start()).trim();
-            if (!value.isEmpty()) current.put(key, iniColor(key, value, number));
+            int delimiter = delimiter(line);
+            if (delimiter < 1 || current == null) continue;
+            Integer color = iniColor(value(line.substring(delimiter + 1)));
+            if (color != null) current.put(line.substring(0, delimiter).trim().toLowerCase(Locale.ROOT), color);
         }
         if (schemes.isEmpty()) throw new ThemeException("No color schemes found");
         List<Scheme> result = new ArrayList<>();
@@ -77,15 +67,51 @@ public final class SpicetifyTheme {
         return result;
     }
 
-    private static int iniColor(String key, String value, int line) {
-        if (value.startsWith("${")) {
-            throw new ThemeException("Line " + line + ": " + key + " uses \"" + value + "\", and ${...} values don't work on Android");
+    private static int delimiter(String line) {
+        for (int i = 0; i < line.length(); i++) {
+            char c = line.charAt(i);
+            if (c == '=' || c == ':') return i;
         }
-        boolean hashed = value.startsWith("#");
-        String digits = hashed ? value.substring(1) : value;
-        Integer color = ArgbColors.parseHex(digits, false);
-        if (color == null || (!hashed && digits.length() == 8)) {
-            throw new ThemeException("Line " + line + ": " + key + " has unsupported color \"" + value + "\"");
+        return -1;
+    }
+
+    /** go-ini ends a value at ";" or "#"; a leading "#" stays, so "#RRGGBB" keeps working. */
+    private static String value(String raw) {
+        String value = raw.trim();
+        int semicolon = value.indexOf(';');
+        if (semicolon >= 0) value = value.substring(0, semicolon);
+        int hash = value.indexOf('#', 1);
+        if (hash >= 0) value = value.substring(0, hash);
+        return value.trim();
+    }
+
+    /**
+     * A color as the Spicetify CLI's ParseColor reads it: "r,g,b" decimals, or the first run of hex
+     * digits (3 digits expand, 6 or more give the first 6, opaque). A leading "#" keeps this
+     * project's #RGB, #RRGGBB and #AARRGGBB. Returns null when the value can't be used here:
+     * ${xrdb:...} and ${ENV} read the desktop, and anything else would be a guess.
+     */
+    static Integer iniColor(String value) {
+        if (value.isEmpty() || value.startsWith("${")) return null;
+        if (value.startsWith("#")) return ArgbColors.parseHex(value.substring(1), false);
+        if (value.indexOf(',') >= 0) return decimals(value);
+        Matcher run = HEX_RUN.matcher(value);
+        if (!run.find()) return null;
+        String digits = run.group();
+        if (digits.length() == 3) return ArgbColors.parseHex(digits, false);
+        return digits.length() >= 6 ? ArgbColors.parseHex(digits.substring(0, 6), false) : null;
+    }
+
+    private static Integer decimals(String value) {
+        String[] parts = value.split(",", 3);
+        if (parts.length != 3) return null;
+        int color = 0xFF000000;
+        for (int i = 0; i < 3; i++) {
+            String part = parts[i].trim();
+            if (!DECIMAL.matcher(part).matches()) return null;
+            int channel = Integer.parseInt(part);
+            if (channel > 255) return null;
+            color |= channel << (16 - 8 * i);
         }
         return color;
     }
