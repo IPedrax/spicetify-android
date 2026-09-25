@@ -10,7 +10,6 @@ import android.graphics.Typeface;
 import android.util.TypedValue;
 import android.view.ContextThemeWrapper;
 import android.view.Gravity;
-import android.view.View;
 import android.view.ViewGroup;
 import android.view.WindowManager;
 import android.widget.Button;
@@ -85,7 +84,7 @@ public final class SpicetifySettingsScreen {
         close.setContentDescription("Close Spicetify settings");
         close.setOnClickListener(view -> dialog.dismiss());
         header.addView(close, new LinearLayout.LayoutParams(dp(56), dp(56)));
-        TextView title = text("Spicetify", true);
+        TextView title = text(context, "Spicetify", true);
         title.setTextSize(20);
         header.addView(title);
         return header;
@@ -114,7 +113,7 @@ public final class SpicetifySettingsScreen {
                     PatchSettings.setCleanSharingEnabled(enabled));
             content.addView(cleanSharing, new LinearLayout.LayoutParams(
                     ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
-            content.addView(text("Remove tracking parameters from Spotify links you share. "
+            content.addView(text(context, "Remove tracking parameters from Spotify links you share. "
                     + "Timestamps and playback context are preserved. Changes apply immediately.", false));
         }
 
@@ -127,8 +126,8 @@ public final class SpicetifySettingsScreen {
         }
 
         if (InstalledPatches.homePins()) {
-            content.addView(text("Home shortcuts", true));
-            content.addView(text("Choose which shortcuts appear first when Spotify includes them on Home. "
+            content.addView(text(context, "Home shortcuts", true));
+            content.addView(text(context, "Choose which shortcuts appear first when Spotify includes them on Home. "
                     + "Return to Home once to load the choices. Restart Spotify after changing pins.", false));
             Button choose = new Button(context);
             choose.setText("Choose pinned shortcuts");
@@ -142,7 +141,7 @@ public final class SpicetifySettingsScreen {
 
         if (!sharingInstalled && !themeInstalled && !InstalledPatches.homePins()
                 && !InstalledPatches.serverFiles()) {
-            content.addView(text("No configurable Spicetify patches are installed.", false));
+            content.addView(text(context, "No configurable Spicetify patches are installed.", false));
         }
         return content;
     }
@@ -187,12 +186,13 @@ public final class SpicetifySettingsScreen {
         picker.show();
     }
 
-    private TextView text(String value, boolean heading) {
+    public static TextView text(Context context, String value, boolean heading) {
         TextView view = new TextView(context);
         view.setText(value);
         view.setTextColor(heading ? Color.WHITE : Color.rgb(179, 179, 179));
         view.setTextSize(heading ? 18 : 14);
-        view.setPadding(0, dp(8), 0, dp(8));
+        int padding = Math.round(8 * context.getResources().getDisplayMetrics().density);
+        view.setPadding(0, padding, 0, padding);
         if (heading) view.setTypeface(null, Typeface.BOLD);
         return view;
     }

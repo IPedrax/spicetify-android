@@ -1,8 +1,11 @@
 package app.spicetify.extension.spotify.theme;
 
+import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertFalse;
+import static org.junit.Assert.assertNotNull;
 import static org.junit.Assert.assertTrue;
 
+import android.app.AlertDialog;
 import android.content.Context;
 import android.view.ContextThemeWrapper;
 import android.view.View;
@@ -16,7 +19,9 @@ import org.junit.Test;
 import org.junit.runner.RunWith;
 import org.robolectric.RobolectricTestRunner;
 import org.robolectric.RuntimeEnvironment;
+import org.robolectric.Shadows;
 import org.robolectric.annotation.Config;
+import org.robolectric.shadows.ShadowAlertDialog;
 
 @RunWith(RobolectricTestRunner.class)
 @Config(sdk = 35, manifest = Config.NONE)
@@ -46,6 +51,11 @@ public class ThemeSectionTest {
         View section = ThemeSection.create(context, true, () -> applied.set(true));
         button(section, "AMOLED black").performClick();
         assertFalse(applied.get());
+
+        AlertDialog dialog = ShadowAlertDialog.getLatestAlertDialog();
+        assertNotNull(dialog);
+        assertTrue(dialog.isShowing());
+        assertEquals("Theme not applied", Shadows.shadowOf(dialog).getTitle());
     }
 
     private static List<String> texts(View view) {
