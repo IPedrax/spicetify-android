@@ -11,6 +11,7 @@ import android.graphics.PixelFormat;
 import android.graphics.Rect;
 import android.graphics.drawable.Drawable;
 import android.util.DisplayMetrics;
+import android.view.View;
 import java.io.File;
 
 /**
@@ -24,15 +25,25 @@ final class ThemeBackground {
 
     private ThemeBackground() {}
 
-    /** Sets the saved image as {@code activity}'s window background; does nothing if none is saved. */
+    /**
+     * Puts the saved image behind Spotify's main activity; does nothing if none is saved or the
+     * activity isn't the one with {@code main_content}.
+     */
     static void applyTo(Activity activity) {
         File file = new File(activity.getFilesDir(), FILE);
         if (!file.exists()) return;
+        int mainContentId = activity.getResources().getIdentifier("main_content", "id", activity.getPackageName());
+        View mainContent = mainContentId == 0 ? null : activity.findViewById(mainContentId);
+        if (mainContent == null) return;
         if (cached == null) {
             cached = decode(file, activity);
             if (cached == null) return;
         }
         activity.getWindow().setBackgroundDrawable(new CenterCrop(cached));
+        // SpotifyMainActivity.onCreate paints android:id/content opaque black, above the window.
+        View content = activity.findViewById(android.R.id.content);
+        if (content != null) content.setBackground(null);
+        mainContent.setBackground(new CenterCrop(cached));
     }
 
     /** Reads the image once per process, downsampled so it isn't much larger than the display. */
