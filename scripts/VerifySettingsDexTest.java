@@ -28,8 +28,8 @@ class VerifySettingsDexTest {
     static Map<String, ClassDef> original;
     static int cases;
 
-    static void activity(UnaryOperator<Method> mutation, String superclass) {
-        var cls = VerifySettingsDex.classes.get(P + "SpicetifySettingsActivity;");
+    static void screen(UnaryOperator<Method> mutation, String superclass) {
+        var cls = VerifySettingsDex.classes.get(P + "SpicetifySettingsScreen;");
         var methods = new ArrayList<Method>();
         for (var m : cls.getMethods()) {
             var changed = mutation.apply(m);
@@ -134,15 +134,12 @@ class VerifySettingsDexTest {
             c.clear();
             c.add(new ImmutableInstruction10x(Opcode.RETURN_VOID));
         }));
-        reject("missing settings Activity",
-                () -> VerifySettingsDex.classes.remove(P + "SpicetifySettingsActivity;"));
-        reject("settings class is not an Activity",
-                () -> activity(m -> m, "Ljava/lang/Object;"));
-        for (var name : List.of("<init>", "open", "onCreate")) {
-            reject("missing Activity " + name,
-                    () -> activity(m -> m.getName().equals(name) ? null : m,
-                            "Landroid/app/Activity;"));
-        }
+        reject("missing settings screen",
+                () -> VerifySettingsDex.classes.remove(P + "SpicetifySettingsScreen;"));
+        reject("settings screen is an Activity",
+                () -> screen(m -> m, "Landroid/app/Activity;"));
+        reject("missing settings screen open",
+                () -> screen(m -> m.getName().equals("open") ? null : m, "Ljava/lang/Object;"));
         String app = "Lcom/spotify/music/SpotifyApplication;";
         reject("missing startup", () -> mutate(app, "onCreate", c -> c.removeFirst()));
         reject("duplicate startup", () -> mutate(app, "onCreate", c -> c.addFirst(c.getFirst())));
