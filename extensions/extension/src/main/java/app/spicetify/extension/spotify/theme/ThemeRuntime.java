@@ -54,10 +54,10 @@ public final class ThemeRuntime {
 
     /** Registers the overlay for a selection, or removes it for Spotify's own colors. */
     private static void register(Context context, ThemeState.Selection selection) throws IOException {
-        Map<String, Integer> roles = roleColors(context, selection);
-        // Spike: Compose screens read the same role colors through the Color(Long) hook.
-        ThemeCompose.load(roles);
-        Map<String, Integer> values = ThemeRoleMap.overlayValues(ThemeRoleMap.load(), roles);
+        Map<String, Integer> values = ThemeRoleMap.overlayValues(ThemeRoleMap.load(), roleColors(context, selection));
+        // Compose reads the same values from memory, so it follows the theme even if the overlay fails.
+        // Spike: a background image makes the page background see-through.
+        ComposeTheme.update(values, ThemeBackground.hasImage(context));
         if (values.isEmpty()) {
             ThemeOverlay.unregister(context);
         } else {
