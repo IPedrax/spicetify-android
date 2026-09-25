@@ -42,6 +42,8 @@ val localFilesFromServerPatch = bytecodePatch(
 
     // A mount install keeps the stock manifest, so the provider this patch declares would never
     // be registered and Local Files could not read from it.
+    // Manager also uses this resolver for the initial selection, so it, not `default`, decides
+    // whether the patch starts selected.
     availability { installer, _ ->
         if (installer == InstallerType.MOUNT) PatchAvailability.UNAVAILABLE else PatchAvailability.DISABLED
     }
