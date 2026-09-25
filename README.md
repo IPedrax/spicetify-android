@@ -23,7 +23,7 @@ See [optional feature setup and limits](docs/optional-features.md).
 | Patch | Default | Behavior |
 | --- | --- | --- |
 | Clean sharing links | Enabled | Removes `si`, `pi`, and known `utm_*` parameters from `open.spotify.com` links. Preserves timestamps, context, other parameters, and fragments. |
-| Theme colors | Disabled | Adds a theme picker to Spicetify settings: AMOLED black, Material You, and Spicetify themes from the official gallery or pasted. Requires Android 14 or later. See [Theme colors](docs/theme.md). |
+| Theme colors | Disabled | Adds a theme picker to Spicetify settings: AMOLED black, Material You, and Spicetify themes from the Spicetify Marketplace or pasted. Requires Android 14 or later. See [Theme colors](docs/theme.md). |
 | Pin shortcuts on Home | Disabled | Moves selected native Home shortcuts first. Configure pins in Spotify's Spicetify settings, then restart Spotify. |
 | Local files from a server | Disabled | Streams an HTTPS WebDAV folder into Local Files. Requires Android 8 or later and byte-range support; configure the server in Spotify's Spicetify settings. Not available for root mount installs, because its content provider must be in the manifest. |
 

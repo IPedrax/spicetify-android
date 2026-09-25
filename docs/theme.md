@@ -12,7 +12,7 @@ Choose one of:
 | AMOLED black | A black background, with menus and sheets slightly lighter. |
 | Material You | Your wallpaper's palette. It updates when Spotify starts after a wallpaper change. |
 | Material You, black background | The wallpaper's accents on a black background. |
-| Browse Spicetify themes | Lists the official spicetify-themes collection from GitHub, downloads the chosen theme's `color.ini`, and lets you pick a scheme. |
+| Spicetify Marketplace | Lists the community themes the desktop Marketplace lists (GitHub topic spicetify-themes, minus archived repositories and Marketplace's blacklist), with previews and search. Themes without a color scheme are left out. Pick a theme, then one of its color schemes. Previews and color schemes load from hosts the theme authors choose. The list is cached for 6 hours; Refresh reloads it. |
 | Paste a Spicetify theme | Paste a `color.ini`, or CSS with `--spice-*` variables. An optional accent key picks the accent from a custom key, such as Catppuccin's `mauve`. |
 
 Applying a theme reopens the current screen. Some colors change only after
@@ -43,9 +43,13 @@ map like this:
 
 Other keys aren't used, including `sidebar`, `player`, `misc`, and newer ones
 such as `play-button` and `nav-active`. Keys a scheme leaves out keep
-Spotify's colors. Values follow the Spicetify CLI: bare hex such as `1db954`,
-plus `#1db954`, `#RGB` and `#AARRGGBB`. `${xrdb:...}` and environment
-variables don't work on a phone.
+Spotify's colors. Values are read the way desktop Spicetify reads them: bare
+hex such as `1db954` (the first six digits of a longer run) and `r,g,b`
+decimals. A value ends at `;`, or at a `#` after its first character. A value
+desktop would pad with white, such as a color name, is skipped, and so are
+`${xrdb:...}` and environment variables, because they read the desktop.
+`#RGB`, `#RRGGBB` and `#AARRGGBB` are an Android addition: desktop reads a
+value that starts with `#` as a comment.
 
 ## How it works
 
