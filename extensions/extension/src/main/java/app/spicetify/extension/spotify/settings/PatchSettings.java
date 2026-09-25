@@ -4,6 +4,7 @@ import android.content.Context;
 import android.content.SharedPreferences;
 import app.spicetify.extension.spotify.home.HomePins;
 import app.spicetify.extension.spotify.localserver.ServerConfig;
+import app.spicetify.extension.spotify.theme.ThemeRuntime;
 
 public final class PatchSettings {
     private static final String FILE = "spicetify_patch_settings";
@@ -14,6 +15,7 @@ public final class PatchSettings {
 
     public static void initialize(Context context) {
         preferences = context.getApplicationContext().getSharedPreferences(FILE, Context.MODE_PRIVATE);
+        if (InstalledPatches.themeColors()) ThemeRuntime.install(context);
         if (InstalledPatches.homePins()) HomePins.initialize(context);
         if (InstalledPatches.serverFiles()) ServerConfig.initialize(context);
     }
