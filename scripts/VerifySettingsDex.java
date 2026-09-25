@@ -152,6 +152,7 @@ class VerifySettingsDex {
         verifyHooks();
         verifyCapability("cleanSharing", sharing);
         verifyCapability("themeColors", theme);
+        verifyThemeTable(theme);
         verifyAnalytics();
         verifyScreen();
         verifyBridge();
@@ -301,6 +302,17 @@ class VerifySettingsDex {
                         && c.get(1).getOpcode() == Opcode.RETURN
                         && ((OneRegisterInstruction) c.get(1)).getRegisterA() == 0,
                 "Installed capability mismatch: " + name);
+    }
+
+    static void verifyThemeTable(boolean enabled) {
+        var c = code(named("Lapp/spicetify/extension/spotify/theme/ThemeRoleMap;", "encoded",
+                List.of(), "Ljava/lang/String;"));
+        // The patched dex can hold the string past index 65535, which needs the jumbo form.
+        boolean constant = c.size() == 2 && (c.get(0).getOpcode() == Opcode.CONST_STRING
+                || c.get(0).getOpcode() == Opcode.CONST_STRING_JUMBO) && c.get(1).getOpcode() == Opcode.RETURN_OBJECT;
+        require(constant && ref(c.get(0)).startsWith("main:") == enabled
+                        && (enabled || ref(c.get(0)).isEmpty()),
+                "Theme role table mismatch: expected " + (enabled ? "the injected table" : "an empty table"));
     }
 
     static int targetIndex(List<Instruction> c, int index) {

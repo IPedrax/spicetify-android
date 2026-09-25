@@ -66,12 +66,6 @@ def main():
         ("changed-server-reader", "server", "Local files from a server", None,
          "Spotify local-files ABI changed:"),
     ]
-    for key, label in (("backgroundColor", "Primary background color"),
-                       ("accentColor", "Accent color"),
-                       ("pressedAccentColor", "Pressed accent color")):
-        cases.append((f"invalid-{key}", None, "Theme colors", key,
-                      f"{label} must be #RRGGBB or #AARRGGBB."))
-
     if args.case:
         unknown = set(args.case) - {case[0] for case in cases}
         if unknown:

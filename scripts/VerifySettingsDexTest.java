@@ -12,9 +12,11 @@ import com.android.tools.smali.dexlib2.immutable.ImmutableMethodImplementation;
 import com.android.tools.smali.dexlib2.immutable.instruction.ImmutableInstruction10x;
 import com.android.tools.smali.dexlib2.immutable.instruction.ImmutableInstruction11n;
 import com.android.tools.smali.dexlib2.immutable.instruction.ImmutableInstruction20t;
+import com.android.tools.smali.dexlib2.immutable.instruction.ImmutableInstruction21c;
 import com.android.tools.smali.dexlib2.immutable.instruction.ImmutableInstruction22t;
 import com.android.tools.smali.dexlib2.immutable.instruction.ImmutableInstruction35c;
 import com.android.tools.smali.dexlib2.immutable.instruction.ImmutableInstruction3rc;
+import com.android.tools.smali.dexlib2.immutable.reference.ImmutableStringReference;
 
 import java.util.ArrayList;
 import java.util.HashMap;
@@ -210,6 +212,8 @@ class VerifySettingsDexTest {
                                 P + "InstalledPatches;",
                                 "themeColors",
                                 c -> c.set(0, new ImmutableInstruction11n(Opcode.CONST_4, 0, 0))));
+        reject("empty theme table", () -> mutate("Lapp/spicetify/extension/spotify/theme/ThemeRoleMap;", "encoded",
+                c -> c.set(0, new ImmutableInstruction21c(Opcode.CONST_STRING, 0, new ImmutableStringReference("")))));
         reject(
                 "wrong reserved analytics value",
                 () ->
