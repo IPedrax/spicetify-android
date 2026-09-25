@@ -10,6 +10,7 @@ import android.graphics.Typeface;
 import android.util.TypedValue;
 import android.view.ContextThemeWrapper;
 import android.view.Gravity;
+import android.view.View;
 import android.view.ViewGroup;
 import android.view.WindowManager;
 import android.widget.Button;
@@ -20,6 +21,8 @@ import android.widget.Switch;
 import android.widget.TextView;
 import android.widget.Toast;
 import app.spicetify.extension.spotify.home.HomePins;
+import app.spicetify.extension.spotify.theme.ThemeRuntime;
+import app.spicetify.extension.spotify.theme.ThemeSection;
 import java.util.ArrayList;
 import java.util.List;
 
@@ -36,10 +39,12 @@ public final class SpicetifySettingsScreen {
     private static final int BACKGROUND = Color.rgb(18, 18, 18);
 
     private final Context context;
+    private final Activity host;
 
     private SpicetifySettingsScreen(Activity activity) {
         // The deleted Activity set Theme.Material; Spotify's own theme restyles framework widgets.
         this.context = new ContextThemeWrapper(activity, android.R.style.Theme_Material);
+        this.host = activity;
     }
 
     public static void open(Activity activity) {
@@ -58,7 +63,7 @@ public final class SpicetifySettingsScreen {
         root.addView(header(dialog));
         ScrollView scroll = new ScrollView(context);
         scroll.setFillViewport(true);
-        scroll.addView(content(), new ScrollView.LayoutParams(
+        scroll.addView(content(dialog), new ScrollView.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
         root.addView(scroll, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f));
         dialog.setContentView(root);
@@ -86,7 +91,7 @@ public final class SpicetifySettingsScreen {
         return header;
     }
 
-    private LinearLayout content() {
+    private LinearLayout content(Dialog dialog) {
         LinearLayout content = new LinearLayout(context);
         content.setOrientation(LinearLayout.VERTICAL);
         int padding = dp(24);
@@ -114,11 +119,11 @@ public final class SpicetifySettingsScreen {
         }
 
         if (themeInstalled) {
-            TextView heading = text("Theme colors", true);
-            heading.setPadding(0, dp(24), 0, 0);
-            content.addView(heading);
-            content.addView(text("Your colors were selected in Morphe Manager. "
-                    + "Change those options and repatch Spotify to use different colors.", false));
+            content.addView(ThemeSection.create(context, ThemeRuntime.supported(context), () -> {
+                // Recreating the activity reloads its resources with the new overlay.
+                dialog.dismiss();
+                host.recreate();
+            }));
         }
 
         if (InstalledPatches.homePins()) {
