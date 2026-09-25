@@ -611,6 +611,33 @@ general service outage nor isolate the patches as the cause. Phone playback,
 Connect, and content-dependent sharing checks remain open. No phone logout,
 uninstall, data reset, or network-setting change was used in this comparison.
 
+## Settings dialog on mount installs
+
+On September 25, 2026, tapping **Spicetify** in Spotify's settings crashed
+Spotify on a POCO X6 Pro 5G (HyperOS 3.0, Android 16) where Morphe Manager
+1.32.1-dev.2 had installed `dev.4` with its root mount method. Android's
+crash record showed `ActivityNotFoundException` for
+`SpicetifySettingsActivity`. The installed file declared the activity, but
+the package manager did not resolve it: a mount install keeps the stock
+manifest registered, so added components never exist for the system.
+
+The settings screen is now a full-screen dialog over Spotify's activity,
+and the settings patch adds nothing to the manifest. A Desktop 1.17.0 build
+of the stock `9.1.80.2221` APK with clean sharing, colors, and Home pins
+passed `verify-artifact.py` (1,145 default colors, ten theme changes, no
+added manifest component, valid signature) and the settings refusal cases.
+Before the checker update, the old checker rejected the same kind of APK
+for the missing Activity.
+
+That APK (SHA-256 prefix `ce3bf7df12608caf`) was placed in Manager's mount
+module on the same phone with the module's owner, mode, and SELinux label,
+and the module's own `service.sh` mounted it in the root namespace. The
+zygote namespace saw the new file through mount propagation. The row
+opened the dialog with the sharing switch, theme note, and Home pins
+button; the close button, the Back gesture, reopening, and the pins picker
+worked. Spotify's exit records show no crash after the test began; one
+system kill 32 seconds after launch was not an exception.
+
 ## Runtime and release checklist
 
 Use the normal Manager entry point before claiming release readiness.
