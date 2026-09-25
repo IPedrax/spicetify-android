@@ -1,6 +1,8 @@
 package app.spicetify.patches.spotify.localfiles
 
 import app.morphe.patcher.extensions.InstructionExtensions.addInstructions
+import app.morphe.patcher.patch.InstallerType
+import app.morphe.patcher.patch.PatchAvailability
 import app.morphe.patcher.patch.PatchException
 import app.morphe.patcher.patch.bytecodePatch
 import app.morphe.patcher.patch.resourcePatch
@@ -37,6 +39,12 @@ val localFilesFromServerPatch = bytecodePatch(
 ) {
     compatibleWith(spotifyCompatibility)
     dependsOn(settingsPatch, serverResourcesPatch)
+
+    // A mount install keeps the stock manifest, so the provider this patch declares would never
+    // be registered and Local Files could not read from it.
+    availability { installer, _ ->
+        if (installer == InstallerType.MOUNT) PatchAvailability.UNAVAILABLE else PatchAvailability.DISABLED
+    }
 
     execute {
         val snapshot = Properties().apply {
