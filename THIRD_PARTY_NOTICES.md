@@ -50,3 +50,13 @@ again. Local changes: one overlay for all mapped Spotify colors instead of
 separate dark and light background overlays, a single shared
 `ResourcesLoader` that is updated in place, and loading through activity
 lifecycle callbacks instead of Morphe's base-context hook.
+
+## Spicetify Marketplace
+
+The Marketplace screen follows the discovery, blacklist and manifest rules of
+[spicetify/marketplace](https://github.com/spicetify/marketplace/tree/ec6f772891bad4bf08b645447c2ade6b06c4f991)
+at `ec6f772891bad4bf08b645447c2ade6b06c4f991` (MIT), reimplemented in Java.
+No code or assets are copied. The blacklist is fetched from that repository
+at runtime. Color values in `color.ini` follow the Spicetify CLI's
+`ParseColor` behavior
+([spicetify/cli](https://github.com/spicetify/cli), LGPL-2.1), reimplemented.
