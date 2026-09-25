@@ -1,3 +1,12 @@
+/*
+ * Copyright 2026 Morphe.
+ * https://github.com/MorpheApp/morphe-patches/pull/2524
+ *
+ * See the included NOTICE file for GPLv3 Section 7 terms that apply to this code.
+ * Modified for Spicetify on 2026-09-25: one overlay for every mapped Spotify color, one shared
+ * ResourcesLoader updated in place, and loading through activity lifecycle callbacks.
+ */
+
 package app.spicetify.extension.spotify.theme;
 
 import android.annotation.TargetApi;

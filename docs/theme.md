@@ -18,9 +18,9 @@ Choose one of:
 Applying a theme reopens the current screen. Some colors change only after
 Spotify restarts.
 
-Some screens, such as Settings, and some controls, such as the filter chips,
-keep Spotify's colors, because Spotify draws them from its code rather than
-from its color resources.
+Some screens, such as Settings, and some controls, such as the Home filter
+chips, keep Spotify's colors: they use colors the theme doesn't map, or
+colors Spotify draws in its code.
 
 Only colors carry over from Spicetify themes. `user.css`, `theme.js`,
 extensions and custom apps need Spotify's desktop web interface. The keys
@@ -53,3 +53,12 @@ The patch declares Spotify's mapped colors overlayable and changes no color
 values. The chosen theme becomes an overlay that Spotify registers for
 itself, loaded into its resources at startup and into every screen as it
 opens.
+
+## Upgrading from patch-time colors
+
+Earlier versions of the Theme colors patch chose colors with background,
+accent, and pressed accent options in Morphe Manager. Those options are
+gone, and Morphe Manager ignores any values saved for them. After
+repatching, Spotify starts with its own colors, and you choose a theme in
+Spicetify settings instead. AMOLED black recreates the old default. On
+Android 13 and older, Spotify keeps its own colors.
