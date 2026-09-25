@@ -1,5 +1,6 @@
 package app.spicetify.patches.spotify.theme
 
+import app.morphe.patcher.extensions.InstructionExtensions.addInstructions
 import app.morphe.patcher.extensions.InstructionExtensions.replaceInstruction
 import app.morphe.patcher.patch.bytecodePatch
 import app.morphe.patcher.patch.resourcePatch
@@ -43,5 +44,13 @@ val themePatch = bytecodePatch(
         val table = requireNotNull(roleTableForExtension) { "The theme resource patch did not run first." }
         mutableClassDefBy(ROLE_MAP_CLASS).methods.single { it.name == "encoded" }
             .replaceInstruction(0, "const-string v0, \"$table\"")
+
+        // Spike: every Compose color constant passes through the extension (Compose's Color(Long)).
+        mutableClassDefBy("Lp/iae1;").methods.single {
+            it.name == "g" && it.parameterTypes == listOf("J") && it.returnType == "J"
+        }.addInstructions(0, """
+            invoke-static {p0, p1}, Lapp/spicetify/extension/spotify/theme/ThemeCompose;->map(J)J
+            move-result-wide p0
+        """.trimIndent())
     }
 }
