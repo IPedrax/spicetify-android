@@ -14,7 +14,7 @@ class ThemeResourcesTest {
     fun `the role map covers every role and names each color once`() {
         assertEquals(ROLE_KEYS, roleMap.keys.toList())
         val names = roleMap.values.flatten()
-        assertEquals(40, names.size)
+        assertEquals(55, names.size)
         assertEquals(names.size, names.toSet().size)
     }
 
