@@ -690,8 +690,17 @@ found on the device. That line was removed (commit `fccb4ca`), leaving only
 readability warnings. This change is covered by unit tests and was not
 re-run on the device.
 
-Spotify default, which removes the overlay, was not observed on the device
-yet.
+In a third session (17:25 to 17:30 local time, APK SHA-256
+`3d51c86cf16f060a133567a843a18e6447824357838e5d43b25d0750e1f04490`, branch
+at `b0fb050` after the final review fixes; `verify-artifact.py` reported
+1,145 default colors unchanged, every mapped color overlayable, and
+signature verified), Spotify registered the saved Sleek (ultrablack) theme
+again at launch. Browsing to the Turntable theme showed a "Theme not
+applied" dialog reading "Turntable (turntable) has no colors Spotify can
+use.", and the saved theme stayed Sleek (ultrablack). Spotify default saved
+"Spotify default", removed both overlay files, and Home drew `#121212`
+again. Spotify stayed in one process for the whole session, with no crash
+records.
 
 ## Runtime and release checklist
 
