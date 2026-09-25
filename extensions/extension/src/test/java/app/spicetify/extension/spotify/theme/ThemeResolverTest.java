@@ -5,8 +5,6 @@ import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertTrue;
 import static org.junit.Assert.fail;
 
-import java.util.Arrays;
-import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -48,7 +46,6 @@ public class ThemeResolverTest {
                 scheme("button", 0xFF7F849C, "button-active", 0xFF9399B2, "mauve", 0xFFCBA6F7), "mauve");
         assertEquals(Integer.valueOf(0xFFCBA6F7), theme.colors.get("button"));
         assertEquals(Integer.valueOf(ArgbColors.mix(0xFFCBA6F7, 0xFF000000, 0.125)), theme.colors.get("button-active"));
-        assertTrue(theme.ignoredKeys.isEmpty());
     }
 
     @Test
@@ -68,21 +65,21 @@ public class ThemeResolverTest {
     }
 
     @Test
-    public void unsetKeysKeepSpotifysColorsAndUnmappedKeysAreReported() {
+    public void unsetKeysKeepSpotifysColors() {
         ThemeResolver.Result theme = ThemeResolver.resolve(
                 scheme("main", 0xFF000000, "sidebar", 0xFF111111, "misc", 0xFF222222, "equalizer", 0xFF333333), "button");
         assertFalse(theme.colors.containsKey("text"));
         assertFalse(theme.colors.containsKey("button"));
-        assertEquals(new HashSet<>(Arrays.asList("sidebar", "misc", "equalizer")), theme.ignoredKeys);
+        assertFalse(theme.colors.containsKey("sidebar"));
     }
 
     @Test
-    public void warnsAboutUnreadableTextLightBackgroundsAndUnusedKeys() {
+    public void warnsAboutUnreadableTextAndLightBackgrounds() {
         List<String> warnings = ThemeResolver.warnings(ThemeResolver.resolve(
                 scheme("main", 0xFFF5F7FA, "text", 0xFFFFFFFF, "misc", 0xFF000000), "button"));
         assertTrue(warnings.get(0).startsWith("Text on the background has a contrast of"));
         assertTrue(warnings.contains("The background is light. Spotify draws some text in white, which will be hard to read."));
-        assertTrue(warnings.contains("Not used on Android: misc."));
+        assertEquals(3, warnings.size());
         assertTrue(ThemeResolver.warnings(ThemeResolver.resolve(scheme("main", 0xFF000000), "button")).isEmpty());
     }
 }

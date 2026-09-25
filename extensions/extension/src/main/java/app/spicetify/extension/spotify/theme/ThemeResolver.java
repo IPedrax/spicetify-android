@@ -7,8 +7,6 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
-import java.util.Set;
-import java.util.TreeSet;
 
 /** Turns a Spicetify color scheme into Spotify color roles. Roles it leaves out keep Spotify's colors. */
 public final class ThemeResolver {
@@ -23,11 +21,9 @@ public final class ThemeResolver {
 
     public static final class Result {
         public final Map<String, Integer> colors;
-        public final Set<String> ignoredKeys;
 
-        Result(Map<String, Integer> colors, Set<String> ignoredKeys) {
+        Result(Map<String, Integer> colors) {
             this.colors = Collections.unmodifiableMap(colors);
-            this.ignoredKeys = Collections.unmodifiableSet(ignoredKeys);
         }
     }
 
@@ -63,10 +59,7 @@ public final class ThemeResolver {
             }
             roles.put("on-button", ArgbColors.contrast(button, BLACK) >= ArgbColors.contrast(button, WHITE) ? BLACK : WHITE);
         }
-        Set<String> ignored = new TreeSet<>(scheme.keySet());
-        ignored.removeAll(ROLES);
-        ignored.remove(accentKey);
-        return new Result(roles, ignored);
+        return new Result(roles);
     }
 
     /** Readability warnings, checked against Spotify's stock colors for roles the theme leaves alone. */
@@ -86,7 +79,6 @@ public final class ThemeResolver {
         if (ArgbColors.luminance(main) > 0.4) {
             warnings.add("The background is light. Spotify draws some text in white, which will be hard to read.");
         }
-        if (!theme.ignoredKeys.isEmpty()) warnings.add("Not used on Android: " + String.join(", ", theme.ignoredKeys) + ".");
         return warnings;
     }
 }
