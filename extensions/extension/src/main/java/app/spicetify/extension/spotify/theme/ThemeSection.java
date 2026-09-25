@@ -185,7 +185,7 @@ public final class ThemeSection {
      * Shows a download's result on the main thread. Spotify's screen can be gone by then (the user
      * left it, or the activity was recreated), and showing a dialog on it would crash Spotify.
      */
-    private static void onMain(Runnable work) {
+    static void onMain(Runnable work) {
         new Handler(Looper.getMainLooper()).post(() -> {
             try {
                 work.run();
