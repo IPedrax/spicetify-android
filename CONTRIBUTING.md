@@ -48,7 +48,7 @@ patch is disabled. Omit `--theme` when colors are disabled; otherwise pass
 the exact background, accent, and pressed-accent values used for patching.
 The checker verifies default color values and IDs, equivalent relocated XML
 selectors, the local builder hook, both final URL hooks, the preference-aware
-wrapper, the private settings Activity, unchanged permissions, and the APK
+wrapper, that settings adds no manifest activity, unchanged permissions, and the APK
 signature. It also compares all four installed settings bridge classes with
 the exact bundle used for patching, including their code and class metadata.
 This catches missing or replaced menu code that still has valid references.

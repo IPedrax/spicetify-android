@@ -16,11 +16,15 @@ the settings screen. Spotify's obfuscated types stay in the generated bridge.
 | Settings patch | Validate the native menu, callback, and initialization hooks; inject the bridge and target manifest entry. |
 | Generated bridge | Create one native Spicetify row and open the internal screen in Spotify's task. |
 | Settings state | Store preferences in an app-private, Spicetify-specific file. |
-| Settings activity | Show installed patch controls, support Back and recreation, and preserve playback. |
+| Settings screen | Full-screen dialog over Spotify's activity. Show installed patch controls, close on Back, and preserve playback. |
 | Sharing extension | Read the setting for each share operation, then call the existing pure URL sanitizer when enabled. |
 
-The activity is non-exported and uses an explicit intent. It adds no
-permissions, public deep links, restart service, or process termination.
+The screen is a dialog, so the settings patch adds nothing to the manifest:
+no activity, permission, deep link, restart service, or process termination.
+A root mount install keeps Spotify's stock manifest registered, and the
+activity this screen used to be crashed Spotify there with
+`ActivityNotFoundException`. Rotation closes the dialog, because Spotify
+recreates its activity; the settings row opens it again.
 Feature availability comes from the selected patches, not saved preferences
 or the presence of an extension class. Repeated menu construction must not
 duplicate the row or retain an old Activity.
@@ -61,10 +65,12 @@ pattern and Spotify integration leads.
 
 These checks are required before calling the settings feature complete.
 
+- Open the screen on a root mount install and on a normal install.
 - Match exactly one menu insertion point and a proven callback contract.
   Reject missing, ambiguous, or incompatible hooks before producing an APK.
 - Inspect the output DEX and target manifest for the initialization, menu,
-  sharing, capability, and non-exported activity declarations.
+  sharing and capability declarations, and confirm the manifest gained no
+  activity.
 - Build sharing-only, theme-only, and combined profiles. Expose only controls
   that work in each profile.
 - Open the screen through Spotify's visible settings entry. Verify Back,
@@ -79,7 +85,7 @@ Implementation and runtime evidence belong in [verification](verification.md).
 ## Current implementation status
 
 The local implementation connects application initialization, the native
-settings row, the non-exported Activity, capability flags, and all three
+settings row, the settings dialog, capability flags, and all three
 sharing hooks. Hash snapshots of 32 inspected native classes reject changes
 to their schemas or code before hook injection. This intentionally supports
 only the inspected Spotify build.
