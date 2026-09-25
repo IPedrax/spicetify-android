@@ -1,6 +1,8 @@
 package app.spicetify.extension.spotify.theme;
 
 import android.app.Activity;
+import android.content.Context;
+import android.content.SharedPreferences;
 import android.graphics.Bitmap;
 import android.graphics.BitmapFactory;
 import android.graphics.Canvas;
@@ -21,6 +23,8 @@ import java.io.File;
  */
 final class ThemeBackground {
     private static final String FILE = "spicetify_background";
+    private static final String PREFERENCES = "spicetify_theme";
+    private static final String BLUR = "background_blur";
     private static final int SCRIM = 0x80000000;
     private static Bitmap cached;
 
@@ -59,25 +63,31 @@ final class ThemeBackground {
         Bitmap full = BitmapFactory.decodeFile(file.getPath(), options);
         if (full == null) return null;
         Bitmap crop = cropToAspect(full, (float) display.widthPixels / display.heightPixels);
+        if (crop != full) full.recycle();
+        if (!blurEnabled(activity)) return crop;
         // A real blur at the crop's own resolution; an upscaled thumbnail looks blocky instead of soft.
         Bitmap blurred = blur(crop, Math.max(2, crop.getHeight() / 80));
-        if (crop != full) crop.recycle();
-        full.recycle();
+        crop.recycle();
         return blurred;
     }
 
-    /** The middle of the image with the screen's aspect ratio: the part a center crop shows. */
-    private static Bitmap cropToAspect(Bitmap image, float aspect) {
-        int width = image.getWidth();
-        int height = image.getHeight();
-        int cropWidth = width;
-        int cropHeight = height;
-        if ((float) width / height > aspect) {
-            cropWidth = Math.max(1, Math.round(height * aspect));
-        } else {
-            cropHeight = Math.max(1, Math.round(width / aspect));
-        }
-        return Bitmap.createBitmap(image, (width - cropWidth) / 2, (height - cropHeight) / 2, cropWidth, cropHeight);
+    /** Whether an image is saved to draw behind Spotify. */
+    static boolean hasImage(Context context) {
+        return new File(context.getFilesDir(), FILE).exists();
+    }
+
+    static boolean blurEnabled(Context context) {
+        return preferences(context).getBoolean(BLUR, false);
+    }
+
+    /** Saves the choice; the next activity start decodes the image again with it. */
+    static void setBlur(Context context, boolean enabled) {
+        preferences(context).edit().putBoolean(BLUR, enabled).apply();
+        cached = null;
+    }
+
+    private static SharedPreferences preferences(Context context) {
+        return context.getApplicationContext().getSharedPreferences(PREFERENCES, Context.MODE_PRIVATE);
     }
 
     /** Three box blurs in a row approximate a Gaussian blur. */
@@ -124,6 +134,20 @@ final class ThemeBackground {
 
     private static int clamp(int index, int length) {
         return index < 0 ? 0 : index >= length ? length - 1 : index;
+    }
+
+    /** The middle of the image with the screen's aspect ratio: the part a center crop shows. */
+    private static Bitmap cropToAspect(Bitmap image, float aspect) {
+        int width = image.getWidth();
+        int height = image.getHeight();
+        int cropWidth = width;
+        int cropHeight = height;
+        if ((float) width / height > aspect) {
+            cropWidth = Math.max(1, Math.round(height * aspect));
+        } else {
+            cropHeight = Math.max(1, Math.round(width / aspect));
+        }
+        return Bitmap.createBitmap(image, (width - cropWidth) / 2, (height - cropHeight) / 2, cropWidth, cropHeight);
     }
 
     /** Largest power-of-two sample size that keeps both dimensions at or above the display size. */
