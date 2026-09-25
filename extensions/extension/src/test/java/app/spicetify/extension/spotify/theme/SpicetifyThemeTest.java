@@ -62,6 +62,11 @@ public class SpicetifyThemeTest {
     }
 
     @Test
+    public void rejectsAnEmptySectionName() {
+        failsWith("[]\nmain = 000000", "Line 1: empty section name");
+    }
+
+    @Test
     public void readsSpiceVariablesFromCss() {
         List<SpicetifyTheme.Scheme> schemes = SpicetifyTheme.parse(":root {\n"
                 + "  --spice-main: #121212;\n"

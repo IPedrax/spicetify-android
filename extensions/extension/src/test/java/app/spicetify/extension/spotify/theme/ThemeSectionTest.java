@@ -58,6 +58,54 @@ public class ThemeSectionTest {
         assertEquals("Theme not applied", Shadows.shadowOf(dialog).getTitle());
     }
 
+    @Test
+    public void applySchemeThatResolvesFineEndsInTheNotAppliedDialog() {
+        AtomicBoolean applied = new AtomicBoolean();
+        SpicetifyTheme.Scheme scheme = SpicetifyTheme.parse("[mocha]\nmain = 1e1e2e").get(0);
+        ThemeSection.applyScheme(context, scheme, null, "Pasted theme", () -> applied.set(true));
+        assertFalse(applied.get());
+
+        AlertDialog dialog = ShadowAlertDialog.getLatestAlertDialog();
+        assertNotNull(dialog);
+        assertEquals("Theme not applied", Shadows.shadowOf(dialog).getTitle());
+        assertEquals("This device couldn't apply the theme.", Shadows.shadowOf(dialog).getMessage());
+    }
+
+    @Test
+    public void applySchemeWithAMissingAccentKeyShowsTheResolversMessage() {
+        SpicetifyTheme.Scheme scheme = SpicetifyTheme.parse("[mocha]\nmain = 1e1e2e").get(0);
+        ThemeSection.applyScheme(context, scheme, "peach", "Pasted theme", () -> {});
+
+        AlertDialog dialog = ShadowAlertDialog.getLatestAlertDialog();
+        assertNotNull(dialog);
+        assertEquals("Theme not applied", Shadows.shadowOf(dialog).getTitle());
+        assertEquals("Accent key \"peach\" is not in this color scheme.", Shadows.shadowOf(dialog).getMessage());
+    }
+
+    @Test
+    public void chooseSchemeWithTwoSchemesListsThemInOrder() {
+        List<SpicetifyTheme.Scheme> schemes = SpicetifyTheme.parse("[mocha]\nmain = 1e1e2e\n[latte]\nmain = eff1f5");
+        ThemeSection.chooseScheme(context, schemes, null, "Pasted theme", () -> {});
+
+        AlertDialog dialog = ShadowAlertDialog.getLatestAlertDialog();
+        assertNotNull(dialog);
+        assertEquals("Choose a color scheme", Shadows.shadowOf(dialog).getTitle());
+        CharSequence[] items = Shadows.shadowOf(dialog).getItems();
+        assertEquals(2, items.length);
+        assertEquals("mocha", items[0]);
+        assertEquals("latte", items[1]);
+    }
+
+    @Test
+    public void chooseSchemeWithOneSchemeAppliesItWithoutAChooser() {
+        List<SpicetifyTheme.Scheme> schemes = SpicetifyTheme.parse("[mocha]\nmain = 1e1e2e");
+        ThemeSection.chooseScheme(context, schemes, null, "Pasted theme", () -> {});
+
+        AlertDialog dialog = ShadowAlertDialog.getLatestAlertDialog();
+        assertNotNull(dialog);
+        assertEquals("Theme not applied", Shadows.shadowOf(dialog).getTitle());
+    }
+
     private static List<String> texts(View view) {
         List<String> texts = new ArrayList<>();
         if (view instanceof TextView) texts.add(((TextView) view).getText().toString());
