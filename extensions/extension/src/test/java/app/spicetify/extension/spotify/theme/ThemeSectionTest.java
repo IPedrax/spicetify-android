@@ -11,6 +11,7 @@ import android.view.ContextThemeWrapper;
 import android.view.View;
 import android.view.ViewGroup;
 import android.widget.Button;
+import android.widget.LinearLayout;
 import android.widget.TextView;
 import java.util.ArrayList;
 import java.util.List;
@@ -43,6 +44,20 @@ public class ThemeSectionTest {
         assertTrue(texts.contains("AMOLED black"));
         assertTrue(texts.contains("Material You"));
         assertTrue(texts.contains("Material You, black background"));
+    }
+
+    @Test
+    public void offersTheSpicetifyMarketplace() {
+        assertNotNull(button(ThemeSection.create(context, true, () -> {}), "Spicetify Marketplace"));
+    }
+
+    @Test
+    public void aButtonWhoseActionFailsIsLoggedInsteadOfCrashing() {
+        LinearLayout section = new LinearLayout(context);
+        ThemeSection.addButton(section, "Broken", () -> {
+            throw new IllegalStateException("broken");
+        });
+        button(section, "Broken").performClick(); // would throw into Spotify's click handling without the guard
     }
 
     @Test
