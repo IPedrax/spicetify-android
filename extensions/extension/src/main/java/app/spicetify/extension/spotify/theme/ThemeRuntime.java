@@ -27,12 +27,12 @@ public final class ThemeRuntime {
         try {
             if (!supported(context)) return;
             Application application = (Application) context.getApplicationContext();
+            ThemeOverlay.applyTo(application.getResources());
+            application.registerActivityLifecycleCallbacks(new Callbacks());
             // Android deletes an app's own overlays when the app is installed again (Morphe found the
             // same), so the saved theme is registered on every start. Material You gets the current
             // wallpaper colors this way too.
             register(application, ThemeState.load(application));
-            ThemeOverlay.applyTo(application.getResources());
-            application.registerActivityLifecycleCallbacks(new Callbacks());
         } catch (Exception e) {
             Log.w(TAG, "Theme could not be loaded", e);
         }
