@@ -64,9 +64,10 @@ def manifest_blocks(aapt2, apk):
 
 def verify_manifest(aapt2, stock, patched, server_files=False):
     before, after = (manifest_blocks(aapt2, apk) for apk in (stock, patched))
-    # A root mount install keeps the stock manifest, so an added activity is never registered.
-    if [body for kind, body in after if kind == "activity" and '="app.spicetify.' in body]:
-        raise AssertionError("Settings must not add an activity to the manifest")
+    # A root mount install keeps the stock manifest, so patches must not add manifest components.
+    for kind in ("activity", "activity-alias", "service", "receiver"):
+        if sum(k == kind for k, _ in after) != sum(k == kind for k, _ in before):
+            raise AssertionError(f"Patches must not add a manifest {kind}")
     providers = [body for kind, body in after if kind == "provider"
                  and '="app.spicetify.extension.spotify.localserver.ServerFileProvider"' in body]
     if len(providers) != int(server_files):
