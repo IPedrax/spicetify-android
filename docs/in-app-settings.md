@@ -13,20 +13,21 @@ the settings screen. Spotify's obfuscated types stay in the generated bridge.
 
 | Component | Responsibility |
 | --- | --- |
-| Settings patch | Validate the native menu, callback, and initialization hooks; inject the bridge and target manifest entry. |
+| Settings patch | Validate the native menu, callback, and initialization hooks; inject the bridge only. |
 | Generated bridge | Create one native Spicetify row and open the internal screen in Spotify's task. |
 | Settings state | Store preferences in an app-private, Spicetify-specific file. |
 | Settings screen | Full-screen dialog over Spotify's activity. Show installed patch controls, close on Back, and preserve playback. |
 | Sharing extension | Read the setting for each share operation, then call the existing pure URL sanitizer when enabled. |
 
-The screen is a dialog, so the settings patch adds nothing to the manifest:
-no activity, permission, deep link, restart service, or process termination.
+The screen is a dialog, so the patch adds nothing to the manifest (no activity,
+permission, or deep link) and needs no restart service or process termination.
 A root mount install keeps Spotify's stock manifest registered, and the
 activity this screen used to be crashed Spotify there with
-`ActivityNotFoundException`. Rotation closes the dialog, because Spotify
-recreates its activity; the settings row opens it again.
-Feature availability comes from the selected patches, not saved preferences
-or the presence of an extension class. Repeated menu construction must not
+`ActivityNotFoundException`. Any configuration change Spotify's activity
+doesn't handle itself (rotation, dark mode, font size, locale, window size)
+recreates the activity and closes the dialog; the settings row opens it again.
+Feature availability comes from the selected patches, not saved preferences or
+the presence of an extension class. Repeated menu construction must not
 duplicate the row or retain an old Activity.
 
 The theme patch currently changes packaged resources. Its colors remain
@@ -44,13 +45,14 @@ alone are insufficient; the callback's return value and its consumers also
 need verification before implementing the bridge.
 
 The APK trace distinguishes two boundaries. The `dtl` callback builds a
-rendering model while constructing the settings list. It must not open the
-activity. The navigation renderer handles the row's click later through
-`tyh0.b`. The bridge must supply a fresh row and its own navigation action.
-The traced root factory provides the Activity and navigation renderer. A
-fresh renderer delegates existing navigation and handles only the reserved
-`spicetify:settings` route. Analytics code `-1` maps to `spicetify_settings`;
-the original standard-navigation codes are 1 through 65.
+rendering model while constructing the settings list. It must not open
+the settings screen. The navigation renderer handles the row's click later
+through `tyh0.b`. The bridge must supply a fresh row and its own
+navigation action. The traced root factory provides the Activity and
+navigation renderer. A fresh renderer delegates existing navigation and
+handles only the reserved `spicetify:settings` route. Analytics code
+`-1` maps to `spicetify_settings`; the original standard-navigation
+codes are 1 through 65.
 
 Keep the reflective design's separation between the pure URL sanitizer and
 the preference-aware wrapper. Update artifact checks to distinguish an
@@ -69,7 +71,7 @@ These checks are required before calling the settings feature complete.
 - Match exactly one menu insertion point and a proven callback contract.
   Reject missing, ambiguous, or incompatible hooks before producing an APK.
 - Inspect the output DEX and target manifest for the initialization, menu,
-  sharing and capability declarations, and confirm the manifest gained no
+  sharing, and capability declarations, and confirm the manifest gained no
   activity.
 - Build sharing-only, theme-only, and combined profiles. Expose only controls
   that work in each profile.
@@ -104,9 +106,11 @@ cases fail without output APKs. The published `dev.3` prerelease adds the
 settings menu. On the Pixel 8, the native row, Back navigation, immediate
 sharing toggle, restart persistence, playback, rotation, and enlarged text
 pass. Theme-only and combined settings controls also pass on the signed-in
-Pixel. The sharing preference survives a same-key update between profiles.
-The default sharing-only profile and its enabled preference were restored.
-See the verification record for the remaining review and test gaps.
+Pixel. The sharing preference survives a same-key update between profiles. The
+default sharing-only profile and its enabled preference were restored. These
+device checks predate the dialog; the dialog's device evidence is in
+[the verification record](verification.md). See the verification record for the
+remaining review and test gaps.
 
 Development builds extend this screen with optional Home pins and server-file
 configuration. [Optional features](optional-features.md) describes their
