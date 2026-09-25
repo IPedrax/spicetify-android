@@ -3,9 +3,12 @@ package app.spicetify.extension.spotify.settings;
 import android.app.Activity;
 import android.app.AlertDialog;
 import android.app.Dialog;
+import android.content.Context;
 import android.content.res.ColorStateList;
 import android.graphics.Color;
 import android.graphics.Typeface;
+import android.util.TypedValue;
+import android.view.ContextThemeWrapper;
 import android.view.Gravity;
 import android.view.ViewGroup;
 import android.view.WindowManager;
@@ -32,10 +35,11 @@ public final class SpicetifySettingsScreen {
     static final String CLOSE_TAG = "spicetify_settings_close";
     private static final int BACKGROUND = Color.rgb(18, 18, 18);
 
-    private final Activity activity;
+    private final Context context;
 
     private SpicetifySettingsScreen(Activity activity) {
-        this.activity = activity;
+        // The deleted Activity set Theme.Material; Spotify's own theme restyles framework widgets.
+        this.context = new ContextThemeWrapper(activity, android.R.style.Theme_Material);
     }
 
     public static void open(Activity activity) {
@@ -45,13 +49,14 @@ public final class SpicetifySettingsScreen {
     }
 
     private void show() {
-        Dialog dialog = new Dialog(activity, android.R.style.Theme_Material_NoActionBar);
-        LinearLayout root = new LinearLayout(activity);
+        Dialog dialog = new Dialog(context, android.R.style.Theme_Material_NoActionBar);
+        dialog.setTitle("Spicetify");
+        LinearLayout root = new LinearLayout(context);
         root.setOrientation(LinearLayout.VERTICAL);
         root.setBackgroundColor(BACKGROUND);
         root.setFitsSystemWindows(true);
         root.addView(header(dialog));
-        ScrollView scroll = new ScrollView(activity);
+        ScrollView scroll = new ScrollView(context);
         scroll.setFillViewport(true);
         scroll.addView(content(), new ScrollView.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
@@ -62,14 +67,16 @@ public final class SpicetifySettingsScreen {
     }
 
     private LinearLayout header(Dialog dialog) {
-        LinearLayout header = new LinearLayout(activity);
+        LinearLayout header = new LinearLayout(context);
         header.setOrientation(LinearLayout.HORIZONTAL);
         header.setGravity(Gravity.CENTER_VERTICAL);
-        ImageButton close = new ImageButton(activity);
+        ImageButton close = new ImageButton(context);
         close.setTag(CLOSE_TAG);
         close.setImageResource(android.R.drawable.ic_menu_close_clear_cancel);
         close.setImageTintList(ColorStateList.valueOf(Color.WHITE));
-        close.setBackgroundColor(Color.TRANSPARENT);
+        TypedValue ripple = new TypedValue();
+        context.getTheme().resolveAttribute(android.R.attr.selectableItemBackgroundBorderless, ripple, true);
+        close.setBackgroundResource(ripple.resourceId);
         close.setContentDescription("Close Spicetify settings");
         close.setOnClickListener(view -> dialog.dismiss());
         header.addView(close, new LinearLayout.LayoutParams(dp(56), dp(56)));
@@ -80,7 +87,7 @@ public final class SpicetifySettingsScreen {
     }
 
     private LinearLayout content() {
-        LinearLayout content = new LinearLayout(activity);
+        LinearLayout content = new LinearLayout(context);
         content.setOrientation(LinearLayout.VERTICAL);
         int padding = dp(24);
         content.setPadding(padding, dp(16), padding, padding);
@@ -88,7 +95,7 @@ public final class SpicetifySettingsScreen {
         boolean sharingInstalled = InstalledPatches.cleanSharing();
         boolean themeInstalled = InstalledPatches.themeColors();
         if (sharingInstalled) {
-            Switch cleanSharing = new Switch(activity);
+            Switch cleanSharing = new Switch(context);
             cleanSharing.setText("Clean sharing links");
             cleanSharing.setTextSize(18);
             cleanSharing.setTextColor(Color.WHITE);
@@ -118,14 +125,14 @@ public final class SpicetifySettingsScreen {
             content.addView(text("Home shortcuts", true));
             content.addView(text("Choose which shortcuts appear first when Spotify includes them on Home. "
                     + "Return to Home once to load the choices. Restart Spotify after changing pins.", false));
-            Button choose = new Button(activity);
+            Button choose = new Button(context);
             choose.setText("Choose pinned shortcuts");
             choose.setOnClickListener(view -> chooseHomePins());
             content.addView(choose);
         }
 
         if (InstalledPatches.serverFiles()) {
-            content.addView(new ServerFilesSettings(activity));
+            content.addView(new ServerFilesSettings(context));
         }
 
         if (!sharingInstalled && !themeInstalled && !InstalledPatches.homePins()
@@ -138,7 +145,7 @@ public final class SpicetifySettingsScreen {
     private void chooseHomePins() {
         List<HomePins.Choice> choices = HomePins.choices();
         if (choices.isEmpty()) {
-            new AlertDialog.Builder(activity).setTitle("No Home shortcuts loaded")
+            new AlertDialog.Builder(context).setTitle("No Home shortcuts loaded")
                     .setMessage("Return to Home and let its shortcuts load, then open this menu again.")
                     .setPositiveButton("OK", null).show();
             return;
@@ -154,7 +161,7 @@ public final class SpicetifySettingsScreen {
             labels[i] = duplicate ? choice.label + "\n" + choice.id : choice.label;
             selected[i] = choice.pinned;
         }
-        AlertDialog picker = new AlertDialog.Builder(activity).setTitle("Pinned Home shortcuts")
+        AlertDialog picker = new AlertDialog.Builder(context).setTitle("Pinned Home shortcuts")
                 .setMultiChoiceItems(labels, selected, (dialog, index, checked) -> selected[index] = checked)
                 .setNegativeButton("Cancel", null)
                 .setPositiveButton("Save", null).create();
@@ -165,18 +172,18 @@ public final class SpicetifySettingsScreen {
                     try {
                         HomePins.setPinned(ids);
                     } catch (IllegalArgumentException changedSelection) {
-                        Toast.makeText(activity, changedSelection.getMessage(), Toast.LENGTH_LONG).show();
+                        Toast.makeText(context, changedSelection.getMessage(), Toast.LENGTH_LONG).show();
                         return;
                     }
                     picker.dismiss();
-                    new AlertDialog.Builder(activity).setMessage("Pins saved. Restart Spotify to refresh Home.")
+                    new AlertDialog.Builder(context).setMessage("Pins saved. Restart Spotify to refresh Home.")
                             .setPositiveButton("OK", null).show();
                 }));
         picker.show();
     }
 
     private TextView text(String value, boolean heading) {
-        TextView view = new TextView(activity);
+        TextView view = new TextView(context);
         view.setText(value);
         view.setTextColor(heading ? Color.WHITE : Color.rgb(179, 179, 179));
         view.setTextSize(heading ? 18 : 14);
@@ -186,6 +193,6 @@ public final class SpicetifySettingsScreen {
     }
 
     private int dp(int value) {
-        return Math.round(value * activity.getResources().getDisplayMetrics().density);
+        return Math.round(value * context.getResources().getDisplayMetrics().density);
     }
 }
