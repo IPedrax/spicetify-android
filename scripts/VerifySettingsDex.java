@@ -153,31 +153,23 @@ class VerifySettingsDex {
         verifyCapability("cleanSharing", sharing);
         verifyCapability("themeColors", theme);
         verifyAnalytics();
-        verifyActivity();
+        verifyScreen();
         verifyBridge();
     }
 
-    static void verifyActivity() {
-        String owner = PREFIX + "SpicetifySettingsActivity;";
-        var activity = classes.get(owner);
-        require(activity != null, "Missing settings Activity");
-        require(AccessFlags.PUBLIC.isSet(activity.getAccessFlags())
-                        && !AccessFlags.ABSTRACT.isSet(activity.getAccessFlags())
-                        && "Landroid/app/Activity;".equals(activity.getSuperclass()),
-                "Settings class must be a public concrete Activity");
-        var constructor = named(owner, "<init>", List.of(), "V");
+    static void verifyScreen() {
+        String owner = PREFIX + "SpicetifySettingsScreen;";
+        var screen = classes.get(owner);
+        require(screen != null, "Missing settings screen");
+        // An Activity would need a manifest entry, which mount installs never register.
+        require(AccessFlags.PUBLIC.isSet(screen.getAccessFlags())
+                        && "Ljava/lang/Object;".equals(screen.getSuperclass()),
+                "Settings screen must be a public class and not an Activity");
         var open = named(owner, "open", List.of("Landroid/app/Activity;"), "V");
-        var onCreate = named(owner, "onCreate", List.of("Landroid/os/Bundle;"), "V");
-        for (var target : List.of(constructor, open, onCreate)) {
-            require(target.getImplementation() != null,
-                    "Missing Activity method body " + target);
-            require(AccessFlags.STATIC.isSet(target.getAccessFlags()) == (target == open),
-                    "Invalid Activity method dispatch " + target);
-            require(AccessFlags.PUBLIC.isSet(target.getAccessFlags())
-                            || (target == onCreate
-                                    && AccessFlags.PROTECTED.isSet(target.getAccessFlags())),
-                    "Inaccessible Activity method " + target);
-        }
+        require(open.getImplementation() != null, "Missing settings screen body " + open);
+        require(AccessFlags.PUBLIC.isSet(open.getAccessFlags())
+                        && AccessFlags.STATIC.isSet(open.getAccessFlags()),
+                "Settings screen open must be public and static");
     }
 
     static List<Instruction> code(Method m) {
