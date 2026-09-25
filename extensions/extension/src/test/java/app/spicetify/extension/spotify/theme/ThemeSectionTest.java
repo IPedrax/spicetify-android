@@ -83,6 +83,18 @@ public class ThemeSectionTest {
     }
 
     @Test
+    public void applySchemeWithNoColorsShowsAnErrorAndDoesNotApply() {
+        SpicetifyTheme.Scheme scheme = SpicetifyTheme.parse("[turntable]\n").get(0);
+        ThemeSection.applyScheme(context, scheme, null, "Pasted theme", () -> {});
+
+        AlertDialog dialog = ShadowAlertDialog.getLatestAlertDialog();
+        assertNotNull(dialog);
+        assertEquals("Theme not applied", Shadows.shadowOf(dialog).getTitle());
+        assertEquals("Pasted theme (turntable) has no colors Spotify can use.", Shadows.shadowOf(dialog).getMessage());
+        assertEquals(ThemePresets.STOCK, ThemeState.load(context).kind);
+    }
+
+    @Test
     public void chooseSchemeWithTwoSchemesListsThemInOrder() {
         List<SpicetifyTheme.Scheme> schemes = SpicetifyTheme.parse("[mocha]\nmain = 1e1e2e\n[latte]\nmain = eff1f5");
         ThemeSection.chooseScheme(context, schemes, null, "Pasted theme", () -> {});

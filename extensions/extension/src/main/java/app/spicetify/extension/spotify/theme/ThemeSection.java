@@ -122,6 +122,10 @@ public final class ThemeSection {
         try {
             ThemeResolver.Result theme = ThemeResolver.resolve(scheme.colors, key);
             String label = themeName + " (" + scheme.name + ")";
+            if (theme.colors.isEmpty()) {
+                error(context, label + " has no colors Spotify can use.");
+                return;
+            }
             List<String> warnings = ThemeResolver.warnings(theme);
             if (!warnings.isEmpty()) Toast.makeText(context, String.join(" ", warnings), Toast.LENGTH_LONG).show();
             apply(context, new ThemeState.Selection(ThemeState.SCHEME, label, theme.colors), onApplied);
