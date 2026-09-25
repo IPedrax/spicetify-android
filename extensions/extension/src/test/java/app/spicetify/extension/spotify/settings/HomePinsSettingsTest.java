@@ -1,5 +1,6 @@
 package app.spicetify.extension.spotify.settings;
 
+import android.app.Activity;
 import android.app.AlertDialog;
 import android.os.Looper;
 import android.view.View;
@@ -18,6 +19,7 @@ import org.robolectric.annotation.Config;
 import org.robolectric.annotation.Implementation;
 import org.robolectric.annotation.Implements;
 import org.robolectric.shadows.ShadowAlertDialog;
+import org.robolectric.shadows.ShadowDialog;
 import org.robolectric.shadows.ShadowToast;
 import static org.junit.Assert.*;
 
@@ -31,8 +33,10 @@ public class HomePinsSettingsTest {
 
     @Test public void emptyPickerExplainsHowToLoadShortcuts() {
         HomePins.initialize(RuntimeEnvironment.getApplication());
-        SpicetifySettingsActivity activity = Robolectric.buildActivity(SpicetifySettingsActivity.class).setup().get();
-        choose(activity.getWindow().getDecorView()).performClick();
+        Activity activity = Robolectric.buildActivity(Activity.class).setup().get();
+        SpicetifySettingsScreen.open(activity);
+        Shadows.shadowOf(Looper.getMainLooper()).idle();
+        choose(ShadowDialog.getLatestDialog().getWindow().getDecorView()).performClick();
         assertEquals("No Home shortcuts loaded", Shadows.shadowOf(ShadowAlertDialog.getLatestAlertDialog()).getTitle());
     }
 
@@ -45,8 +49,10 @@ public class HomePinsSettingsTest {
         java.lang.reflect.Method capture = HomePins.class.getDeclaredMethod("captureAndOrder", String[].class, String[].class);
         capture.setAccessible(true);
         capture.invoke(null, new String[]{"spotify:playlist:new"}, new String[]{"New playlist"});
-        SpicetifySettingsActivity activity = Robolectric.buildActivity(SpicetifySettingsActivity.class).setup().get();
-        choose(activity.getWindow().getDecorView()).performClick();
+        Activity activity = Robolectric.buildActivity(Activity.class).setup().get();
+        SpicetifySettingsScreen.open(activity);
+        Shadows.shadowOf(Looper.getMainLooper()).idle();
+        choose(ShadowDialog.getLatestDialog().getWindow().getDecorView()).performClick();
         Shadows.shadowOf(Looper.getMainLooper()).idle();
         AlertDialog picker = ShadowAlertDialog.getLatestAlertDialog();
         picker.getListView().performItemClick(null, 64, 64);

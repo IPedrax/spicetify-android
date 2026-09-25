@@ -7,31 +7,16 @@ import app.morphe.patcher.extensions.InstructionExtensions.replaceInstruction
 import app.morphe.patcher.patch.BytecodePatchContext
 import app.morphe.patcher.patch.PatchException
 import app.morphe.patcher.patch.bytecodePatch
-import app.morphe.patcher.patch.resourcePatch
 import app.morphe.patcher.util.smali.ExternalLabel
 import com.android.tools.smali.dexlib2.Opcode
 import com.android.tools.smali.dexlib2.iface.instruction.ReferenceInstruction
 import java.util.Properties
 
 private const val EXTENSION = "Lapp/spicetify/extension/spotify/settings/"
-private const val ACTIVITY = "app.spicetify.extension.spotify.settings.SpicetifySettingsActivity"
-private const val ANDROID = "http://schemas.android.com/apk/res/android"
 
-private val settingsResourcesPatch = resourcePatch {
-    execute {
-        document("AndroidManifest.xml").use { manifest ->
-            val application = manifest.getElementsByTagName("application").item(0)
-            val activity = manifest.createElement("activity")
-            activity.setAttributeNS(ANDROID, "android:name", ACTIVITY)
-            activity.setAttributeNS(ANDROID, "android:exported", "false")
-            activity.setAttributeNS(ANDROID, "android:label", "Spicetify")
-            application.appendChild(activity)
-        }
-    }
-}
-
+// Adds nothing to the manifest. A root mount install keeps the stock manifest registered, so the
+// settings screen is a dialog (SpicetifySettingsScreen) instead of an activity of its own.
 internal val settingsPatch = bytecodePatch {
-    dependsOn(settingsResourcesPatch)
     extendWith("extensions/spotify.mpe")
     extendWith("extensions/settings.dex")
 
