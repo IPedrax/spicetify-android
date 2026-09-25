@@ -21,6 +21,8 @@ import java.io.File;
  */
 final class ThemeBackground {
     private static final String FILE = "spicetify_background";
+    private static final int BLUR_FACTOR = 12;
+    private static final int SCRIM = 0x80000000;
     private static Bitmap cached;
 
     private ThemeBackground() {}
@@ -55,7 +57,13 @@ final class ThemeBackground {
         DisplayMetrics display = activity.getResources().getDisplayMetrics();
         BitmapFactory.Options options = new BitmapFactory.Options();
         options.inSampleSize = sampleSize(bounds.outWidth, bounds.outHeight, display.widthPixels, display.heightPixels);
-        return BitmapFactory.decodeFile(file.getPath(), options);
+        Bitmap full = BitmapFactory.decodeFile(file.getPath(), options);
+        if (full == null) return null;
+        // Spike blur: a tiny copy drawn back at full size with bilinear filtering reads as a soft blur.
+        Bitmap small = Bitmap.createScaledBitmap(full, Math.max(1, full.getWidth() / BLUR_FACTOR),
+                Math.max(1, full.getHeight() / BLUR_FACTOR), true);
+        if (small != full) full.recycle();
+        return small;
     }
 
     /** Largest power-of-two sample size that keeps both dimensions at or above the display size. */
@@ -94,6 +102,8 @@ final class ThemeBackground {
             canvas.save();
             canvas.clipRect(getBounds());
             canvas.drawBitmap(bitmap, matrix, paint);
+            // Dim the image so text stays readable, like Galaxy's darkened backgrounds.
+            canvas.drawColor(SCRIM);
             canvas.restore();
         }
 
