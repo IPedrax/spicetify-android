@@ -21,7 +21,6 @@ import java.io.File;
  */
 final class ThemeBackground {
     private static final String FILE = "spicetify_background";
-    private static final int BLUR_FACTOR = 12;
     private static final int SCRIM = 0x80000000;
     private static Bitmap cached;
 
@@ -59,11 +58,72 @@ final class ThemeBackground {
         options.inSampleSize = sampleSize(bounds.outWidth, bounds.outHeight, display.widthPixels, display.heightPixels);
         Bitmap full = BitmapFactory.decodeFile(file.getPath(), options);
         if (full == null) return null;
-        // Spike blur: a tiny copy drawn back at full size with bilinear filtering reads as a soft blur.
-        Bitmap small = Bitmap.createScaledBitmap(full, Math.max(1, full.getWidth() / BLUR_FACTOR),
-                Math.max(1, full.getHeight() / BLUR_FACTOR), true);
-        if (small != full) full.recycle();
-        return small;
+        Bitmap crop = cropToAspect(full, (float) display.widthPixels / display.heightPixels);
+        // A real blur at the crop's own resolution; an upscaled thumbnail looks blocky instead of soft.
+        Bitmap blurred = blur(crop, Math.max(2, crop.getHeight() / 80));
+        if (crop != full) crop.recycle();
+        full.recycle();
+        return blurred;
+    }
+
+    /** The middle of the image with the screen's aspect ratio: the part a center crop shows. */
+    private static Bitmap cropToAspect(Bitmap image, float aspect) {
+        int width = image.getWidth();
+        int height = image.getHeight();
+        int cropWidth = width;
+        int cropHeight = height;
+        if ((float) width / height > aspect) {
+            cropWidth = Math.max(1, Math.round(height * aspect));
+        } else {
+            cropHeight = Math.max(1, Math.round(width / aspect));
+        }
+        return Bitmap.createBitmap(image, (width - cropWidth) / 2, (height - cropHeight) / 2, cropWidth, cropHeight);
+    }
+
+    /** Three box blurs in a row approximate a Gaussian blur. */
+    private static Bitmap blur(Bitmap source, int radius) {
+        int width = source.getWidth();
+        int height = source.getHeight();
+        int[] pixels = new int[width * height];
+        source.getPixels(pixels, 0, width, 0, 0, width, height);
+        int[] scratch = new int[pixels.length];
+        for (int pass = 0; pass < 3; pass++) {
+            boxBlur(pixels, scratch, width, height, radius, true);
+            boxBlur(scratch, pixels, width, height, radius, false);
+        }
+        return Bitmap.createBitmap(pixels, width, height, Bitmap.Config.ARGB_8888);
+    }
+
+    /** One opaque box blur along every row (horizontal) or column, clamping at the edges. */
+    private static void boxBlur(int[] in, int[] out, int width, int height, int radius, boolean horizontal) {
+        int lines = horizontal ? height : width;
+        int length = horizontal ? width : height;
+        int step = horizontal ? 1 : width;
+        int window = radius * 2 + 1;
+        for (int line = 0; line < lines; line++) {
+            int start = horizontal ? line * width : line;
+            int red = 0;
+            int green = 0;
+            int blue = 0;
+            for (int i = -radius; i <= radius; i++) {
+                int pixel = in[start + clamp(i, length) * step];
+                red += (pixel >> 16) & 0xFF;
+                green += (pixel >> 8) & 0xFF;
+                blue += pixel & 0xFF;
+            }
+            for (int i = 0; i < length; i++) {
+                out[start + i * step] = 0xFF000000 | ((red / window) << 16) | ((green / window) << 8) | (blue / window);
+                int add = in[start + clamp(i + radius + 1, length) * step];
+                int remove = in[start + clamp(i - radius, length) * step];
+                red += ((add >> 16) & 0xFF) - ((remove >> 16) & 0xFF);
+                green += ((add >> 8) & 0xFF) - ((remove >> 8) & 0xFF);
+                blue += (add & 0xFF) - (remove & 0xFF);
+            }
+        }
+    }
+
+    private static int clamp(int index, int length) {
+        return index < 0 ? 0 : index >= length ? length - 1 : index;
     }
 
     /** Largest power-of-two sample size that keeps both dimensions at or above the display size. */
