@@ -25,7 +25,9 @@ Spotify `9.1.80.2221`.
 ## Server files
 
 Enable **Local files from a server** when patching. This feature requires
-Android 8 or later and an HTTPS WebDAV folder with byte-range support.
+Android 8 or later and an HTTPS WebDAV folder with byte-range support. It
+isn't available for root mount installs, because its content provider must
+be in the manifest.
 
 1. Open **Settings and privacy > Spicetify**.
 2. Enter the full WebDAV folder URL, username, and password or app password.

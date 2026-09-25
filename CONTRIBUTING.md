@@ -48,19 +48,20 @@ patch is disabled. Omit `--theme` when colors are disabled; otherwise pass
 the exact background, accent, and pressed-accent values used for patching.
 The checker verifies default color values and IDs, equivalent relocated XML
 selectors, the local builder hook, both final URL hooks, the preference-aware
-wrapper, that settings adds no manifest activity, unchanged permissions, and the APK
-signature. It also compares all four installed settings bridge classes with
-the exact bundle used for patching, including their code and class metadata.
+wrapper, that settings adds no manifest activity, unchanged permissions, and
+the APK signature. It also compares all four installed settings bridge classes
+with the exact bundle used for patching, including their code and class
+metadata.
 This catches missing or replaced menu code that still has valid references.
 Verify the bundle's release checksum and provenance separately; matching an
 untrusted bundle does not establish that its code is correct.
 It does not execute Spotify or cover every resource configuration.
 
-For builds with optional features, add `--home-pins` and/or
-`--server-files` to match the selected patches. The checker validates their
-capability flags and the server provider's private manifest declaration.
-The four-argument Java settings checker remains available for `dev.3` APKs;
-the Python checker expects the current extension's four capability methods.
+For builds with optional features, add `--home-pins` and/or `--server-files` to
+match the selected patches. The checker validates their capability flags and
+the server provider's private manifest declaration. The settings checks match
+this branch's dialog screen, and `dev.3` or `dev.4` APKs need the scripts from
+their release tags.
 
 Check refusal paths against the same stock base APK and bundle:
 
@@ -89,10 +90,10 @@ cases against your private APK:
 ```
 
 Use an APK built from the current checkout's bridge. These tests remove or
-miswire startup, menu, capability, analytics, Activity, and bridge instructions
-in memory, including empty menu and navigation implementations. The stock
-and patched APKs stay unchanged. CI cannot
-run these cases without a privately supplied Spotify fixture.
+miswire startup, menu, capability, analytics, settings screen, and bridge
+instructions in memory, including empty menu and navigation implementations.
+The stock and patched APKs stay unchanged. CI cannot run these cases without a
+privately supplied Spotify fixture.
 
 Record the stock APK's version, version code, ABI, SHA-256, Android version,
 and Morphe version. Apply each patch separately and together, inspect the
