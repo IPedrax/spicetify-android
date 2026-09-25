@@ -41,8 +41,9 @@ proprietary assets are excluded.
 ## Morphe theme overlay
 
 `ThemeOverlay.java` ports the self-targeting overlay technique of Morphe's
-`ThemeColorOverlay.java` in MorpheApp/morphe-patches (GPL-3.0 with the
-Morphe NOTICE this repository retains), read on September 25, 2026.
+[`ThemeColorOverlay.java`](https://github.com/MorpheApp/morphe-patches/blob/86e146c54bad8450265f2ac2d734722fd682794c/extensions/shared-youtube/library/src/main/java/app/morphe/extension/shared/theme/ThemeColorOverlay.java)
+in MorpheApp/morphe-patches (GPL-3.0 with the Morphe NOTICE this repository
+retains), at `86e146c54bad8450265f2ac2d734722fd682794c`.
 `ThemeRuntime.java` follows Morphe in registering the overlay on every
 start, because Android deletes an app's own overlays when it is installed
 again. Local changes: one overlay for all mapped Spotify colors instead of

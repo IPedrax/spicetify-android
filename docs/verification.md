@@ -680,9 +680,9 @@ session, with no crash records.
 
 Spotify's Settings screen kept `#121212` under Sleek (nord). On Home, the
 selected filter chip ("All") and the check icon stayed green and the
-unselected chips kept `#333333` under every theme, Material You included,
-because Spotify draws them from its code rather than its color resources;
-none of this was themed.
+unselected chips kept `#333333` under every theme, Material You included.
+None of this was themed: these colors come from resources the theme doesn't
+map or from Spotify's code.
 
 The toast shown after applying a gallery theme listed the Spicetify keys
 Android does not use, and Android cut it off after two lines; this was
