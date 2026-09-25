@@ -45,6 +45,7 @@ public final class SpicetifyTheme {
             if (line.startsWith("[")) {
                 if (!line.endsWith("]")) throw new ThemeException("Line " + number + ": unclosed section header");
                 String name = line.substring(1, line.length() - 1).trim().toLowerCase(Locale.ROOT);
+                if (name.isEmpty()) throw new ThemeException("Line " + number + ": empty section name");
                 current = schemes.get(name);
                 if (current == null) {
                     current = new LinkedHashMap<>();

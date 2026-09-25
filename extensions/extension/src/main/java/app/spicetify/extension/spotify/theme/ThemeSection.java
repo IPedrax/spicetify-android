@@ -55,9 +55,7 @@ public final class ThemeSection {
             Toast.makeText(context, "Theme applied: " + selection.label, Toast.LENGTH_SHORT).show();
             onApplied.run();
         } else {
-            new AlertDialog.Builder(context).setTitle("Theme not applied")
-                    .setMessage("This device couldn't apply the theme.")
-                    .setPositiveButton("OK", null).show();
+            error(context, "This device couldn't apply the theme.");
         }
     }
 
