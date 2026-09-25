@@ -678,10 +678,11 @@ button `cba6f7`) produced a `.frro` of 998 bytes and a Home background of
 `.frro` of 1,457 bytes. Spotify stayed in one process for the whole
 session, with no crash records.
 
-Spotify's Settings screen kept `#121212` under Sleek (nord), and the filter
-chips ("All") and the check icon stayed green under every theme, because
-Spotify draws them from its code rather than its color resources; none of
-this was themed.
+Spotify's Settings screen kept `#121212` under Sleek (nord). On Home, the
+selected filter chip ("All") and the check icon stayed green and the
+unselected chips kept `#333333` under every theme, Material You included,
+because Spotify draws them from its code rather than its color resources;
+none of this was themed.
 
 The toast shown after applying a gallery theme listed the Spicetify keys
 Android does not use, and Android cut it off after two lines; this was

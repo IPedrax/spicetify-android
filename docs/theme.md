@@ -37,7 +37,7 @@ map like this:
 | `button-active` | Pressed accent (derived when missing) |
 | `button-disabled` | Disabled controls |
 | `selected-row` | Translucent row overlays, keeping Spotify's transparency |
-| `tab-active` | Active filter chips |
+| `tab-active` | Spotify's `gray_20` color (the Home filter chips don't use it) |
 | `notification`, `notification-error` | Announcements and errors |
 | `shadow` | Shadows and scrims, keeping Spotify's transparency |
 
