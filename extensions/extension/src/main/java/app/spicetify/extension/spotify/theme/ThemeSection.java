@@ -151,7 +151,8 @@ public final class ThemeSection {
                             .setNegativeButton("Cancel", null).show();
                 });
             } catch (Exception e) {
-                onMain(() -> error(context, "Couldn't load the theme list: " + e.getMessage()));
+                Log.w("Spicetify", describe(e), e);
+                onMain(() -> error(context, "Couldn't load the theme list: " + describe(e)));
             }
         });
     }
@@ -162,13 +163,22 @@ public final class ThemeSection {
                 List<SpicetifyTheme.Scheme> schemes = SpicetifyTheme.parse(ThemeGallery.HTTP.get(ThemeGallery.colorIniUrl(theme)));
                 onMain(() -> chooseScheme(context, schemes, "button", theme, onApplied));
             } catch (FileNotFoundException e) {
+                Log.w("Spicetify", describe(e), e);
                 onMain(() -> error(context, theme + " has no color schemes to use on Android."));
             } catch (ThemeException e) {
-                onMain(() -> error(context, theme + ": " + e.getMessage()));
+                Log.w("Spicetify", describe(e), e);
+                onMain(() -> error(context, theme + ": " + describe(e)));
             } catch (Exception e) {
-                onMain(() -> error(context, "Couldn't download " + theme + ": " + e.getMessage()));
+                Log.w("Spicetify", describe(e), e);
+                onMain(() -> error(context, "Couldn't download " + theme + ": " + describe(e)));
             }
         });
+    }
+
+    /** {@code e.getMessage()}, or the exception's class name when there's no message to show. */
+    private static String describe(Exception e) {
+        String message = e.getMessage();
+        return message != null ? message : e.getClass().getSimpleName();
     }
 
     /**
