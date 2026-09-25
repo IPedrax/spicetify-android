@@ -30,9 +30,9 @@ Feature availability comes from the selected patches, not saved preferences or
 the presence of an extension class. Repeated menu construction must not
 duplicate the row or retain an old Activity.
 
-The theme patch currently changes packaged resources. Its colors remain
-patch-time options until a separate runtime color hook works. The menu must
-not offer a color control that cannot affect Spotify.
+The theme is chosen in this screen on Android 14 and later. The patch
+declares Spotify's mapped colors overlayable, and the screen applies the
+chosen theme with an overlay Spotify registers for itself.
 
 ## Design decision
 

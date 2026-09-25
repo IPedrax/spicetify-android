@@ -23,7 +23,7 @@ See [optional feature setup and limits](docs/optional-features.md).
 | Patch | Default | Behavior |
 | --- | --- | --- |
 | Clean sharing links | Enabled | Removes `si`, `pi`, and known `utm_*` parameters from `open.spotify.com` links. Preserves timestamps, context, other parameters, and fragments. |
-| Theme colors | Disabled | Sets selected background, accent, and pressed-accent colors. The default background is AMOLED black. Hardcoded colors and animations can retain Spotify's colors. |
+| Theme colors | Disabled | Adds a theme picker to Spicetify settings: AMOLED black, Material You, and Spicetify themes from the official gallery or pasted. Requires Android 14 or later. See [Theme colors](docs/theme.md). |
 | Pin shortcuts on Home | Disabled | Moves selected native Home shortcuts first. Configure pins in Spotify's Spicetify settings, then restart Spotify. |
 | Local files from a server | Disabled | Streams an HTTPS WebDAV folder into Local Files. Requires Android 8 or later and byte-range support; configure the server in Spotify's Spicetify settings. Not available for root mount installs, because its content provider must be in the manifest. |
 
@@ -44,7 +44,7 @@ See [optional feature setup and limits](docs/optional-features.md).
 | [Clean sharing links](#clean-sharing-links) | Removes sharing identifiers and marketing parameters from open.spotify.com links. Keeps playback timestamps, context, and other parameters. |  |
 | [Local files from a server](#local-files-from-a-server) | Streams audio from an HTTPS WebDAV folder into Local Files. Configure the server in Spicetify settings. Experimental; requires byte-range support. |  |
 | [Pin shortcuts on Home](#pin-shortcuts-on-home) | Choose which of Spotify's Home shortcuts appear first in Spicetify settings. Pins are saved on this device. Restart Spotify after changing pins. |  |
-| [Theme colors](#theme-colors) | Changes selected background and accent color resources; defaults to AMOLED black. Some screens, hardcoded colors, and animations retain Spotify's colors. | • Primary background color<br>• Accent color<br>• Pressed accent color |
+| [Theme colors](#theme-colors) | Adds a theme picker to Spicetify settings: presets, Material You and Spicetify themes. Requires Android 14 or later. Some hardcoded colors and animations keep Spotify's look. |  |
 
 </details>
 
@@ -90,8 +90,7 @@ instead of adding it again. To add it manually and patch Spotify:
    picker** in Manager first.
 7. Read the experimental-support notice and select **Proceed anyway** if you
    want to test this build. In Expert mode, select the optional patches you
-   want. Use **Theme colors** settings to adjust colors before patching, then
-   select **Proceed to patching**.
+   want, then select **Proceed to patching**.
 8. Wait for **Patching complete**, then select **Install**. If Manager reports
    a certificate conflict, uninstall the existing app only after accepting
    the data loss described above. Confirm installation in Android's dialog.
@@ -109,10 +108,9 @@ Version `1.0.0-dev.3` adds a **Spicetify** row to Spotify's settings.
 3. Turn **Clean sharing links** on or off. The next share uses your choice
    immediately. The setting survives restarting Spotify.
 
-Only installed patches appear here. If you selected **Theme colors**, the
-screen explains how to change them in Manager and repatch Spotify. Colors
-are still selected when patching; they cannot be changed live in Spotify.
-Home pins and server files have their own controls here when installed.
+Only installed patches appear here. **Theme colors** adds a **Theme** section
+on Android 14 and later; see [Theme colors](docs/theme.md). Home pins and
+server files have their own controls here when installed.
 Follow the [optional feature setup](docs/optional-features.md) to use them.
 
 To update an existing Manager-signed installation, update **Spicetify Android

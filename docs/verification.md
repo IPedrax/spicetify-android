@@ -638,6 +638,60 @@ button; the close button, the Back gesture, reopening, and the pins picker
 worked. Spotify's exit records show no crash after the test began; one
 system kill 32 seconds after launch was not an exception.
 
+## In-app themes
+
+On September 25, 2026, in-app theme choices were exercised on a POCO X6 Pro
+5G (model 2311DRK48G), HyperOS 3.0, Android 16 (SDK 36), rooted with
+KernelSU. Spotify `9.1.80.2221` (version code `145767611`) was installed as
+a Morphe Manager root mount install (module `com.spotify.music-morphe`).
+Each test APK was copied into the module and remounted with the module's
+own `service.sh`; the mounted `base.apk` hash matched the pushed APK in the
+root and zygote mount views. Clean sharing links, Theme colors, and Pin
+shortcuts on Home were the selected patches.
+
+In a first session (14:50 to 14:55 local time, APK SHA-256
+`e549c7e9d11cacd6ce18da00ec581fb262dc25303290a2b39147ba9e428b59dd`, built
+during Task 5), launching with no theme saved made Android create the app's
+self-targeting overlay directory `app_.self_target/<base APK folder>/`,
+which stayed empty. AMOLED black was applied while Spotify was open; the
+user reported the colors changing right away. `spicetify_theme.frro` (550
+bytes) and `spicetify_theme.idmap` (644 bytes) appeared in that directory,
+and the saved theme read "AMOLED black". After force-stopping and
+relaunching Spotify (a new process), both files were written again at
+startup, and Home drew its background as `#000000` (it had been
+`#121212`). No crash records appeared for the Spotify process.
+
+In a second session (15:43 to 15:46 local time, APK SHA-256
+`4c53dcdc658148662df40c7fac1d00c6a31f6c9323d7c167962b112d4c928273`, branch
+at `8e4de7c`; `verify-artifact.py` reported 1,145 default colors unchanged,
+every mapped color overlayable, and signature verified), a capture loop
+recorded the saved theme, the overlay files, and a screenshot every 2
+seconds while the user went through the choices. Material You produced a
+`.frro` of 1,306 bytes and a Home background of `#1D1B20`, from the
+wallpaper palette. Material You, black background also produced a `.frro`
+of 1,306 bytes. Browse Spicetify themes listed the 15 official themes,
+Blossom to Ziro; choosing Sleek, then its "nord" scheme, applied it, with a
+`.frro` of 1,457 bytes and a "Theme applied: Sleek (nord)" toast. Pasting a
+Spicetify theme with a "mocha" section (main `1e1e2e`, text `cdd6f4`,
+button `cba6f7`) produced a `.frro` of 998 bytes and a Home background of
+`#1E1E2D`. The user later applied Sleek's "ultrablack" scheme, producing a
+`.frro` of 1,457 bytes. Spotify stayed in one process for the whole
+session, with no crash records.
+
+Spotify's Settings screen kept `#121212` under Sleek (nord), and the filter
+chips ("All") and the check icon stayed green under every theme, because
+Spotify draws them from its code rather than its color resources; none of
+this was themed.
+
+The toast shown after applying a gallery theme listed the Spicetify keys
+Android does not use, and Android cut it off after two lines; this was
+found on the device. That line was removed (commit `fccb4ca`), leaving only
+readability warnings. This change is covered by unit tests and was not
+re-run on the device.
+
+Spotify default, which removes the overlay, was not observed on the device
+yet.
+
 ## Runtime and release checklist
 
 Use the normal Manager entry point before claiming release readiness.
