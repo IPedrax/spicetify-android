@@ -13,16 +13,11 @@ import android.widget.EditText;
 import android.widget.LinearLayout;
 import android.widget.Toast;
 import app.spicetify.extension.spotify.settings.SpicetifySettingsScreen;
-import java.io.FileNotFoundException;
 import java.util.List;
 import java.util.Locale;
-import java.util.concurrent.ExecutorService;
-import java.util.concurrent.Executors;
 
 /** The Theme part of the Spicetify settings screen. */
 public final class ThemeSection {
-    private static final ExecutorService NETWORK = Executors.newSingleThreadExecutor();
-
     private static final String[][] PRESETS = {
             {ThemePresets.STOCK, "Spotify default"},
             {ThemePresets.AMOLED, "AMOLED black"},
@@ -51,7 +46,7 @@ public final class ThemeSection {
             addButton(section, preset[1], () ->
                     apply(context, ThemeState.Selection.preset(preset[0], preset[1]), onApplied));
         }
-        addButton(section, "Browse Spicetify themes", () -> browse(context, onApplied));
+        addButton(section, "Spicetify Marketplace", () -> MarketplaceScreen.open(context, onApplied));
         addButton(section, "Paste a Spicetify theme", () -> paste(context, onApplied));
         section.addView(SpicetifySettingsScreen.text(
                 context, "Some colors change after Spotify restarts.", false));
@@ -72,7 +67,13 @@ public final class ThemeSection {
         Button button = new Button(section.getContext());
         button.setText(label);
         button.setAllCaps(false);
-        button.setOnClickListener(view -> action.run());
+        button.setOnClickListener(view -> {
+            try {
+                action.run();
+            } catch (RuntimeException e) {
+                Log.w("Spicetify", label + " failed", e);
+            }
+        });
         section.addView(button, new LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
     }
@@ -139,44 +140,8 @@ public final class ThemeSection {
                 .setPositiveButton("OK", null).show();
     }
 
-    private static void browse(Context context, Runnable onApplied) {
-        Toast.makeText(context, "Loading Spicetify themes", Toast.LENGTH_SHORT).show();
-        NETWORK.execute(() -> {
-            try {
-                List<String> themes = ThemeGallery.parseListing(ThemeGallery.HTTP.get(ThemeGallery.LISTING_URL));
-                onMain(() -> {
-                    String[] names = themes.toArray(new String[0]);
-                    new AlertDialog.Builder(context).setTitle("Spicetify themes")
-                            .setItems(names, (dialog, which) -> download(context, names[which], onApplied))
-                            .setNegativeButton("Cancel", null).show();
-                });
-            } catch (Exception e) {
-                Log.w("Spicetify", describe(e), e);
-                onMain(() -> error(context, "Couldn't load the theme list: " + describe(e)));
-            }
-        });
-    }
-
-    private static void download(Context context, String theme, Runnable onApplied) {
-        NETWORK.execute(() -> {
-            try {
-                List<SpicetifyTheme.Scheme> schemes = SpicetifyTheme.parse(ThemeGallery.HTTP.get(ThemeGallery.colorIniUrl(theme)));
-                onMain(() -> chooseScheme(context, schemes, "button", theme, onApplied));
-            } catch (FileNotFoundException e) {
-                Log.w("Spicetify", describe(e), e);
-                onMain(() -> error(context, theme + " has no color schemes to use on Android."));
-            } catch (ThemeException e) {
-                Log.w("Spicetify", describe(e), e);
-                onMain(() -> error(context, theme + ": " + describe(e)));
-            } catch (Exception e) {
-                Log.w("Spicetify", describe(e), e);
-                onMain(() -> error(context, "Couldn't download " + theme + ": " + describe(e)));
-            }
-        });
-    }
-
     /** {@code e.getMessage()}, or the exception's class name when there's no message to show. */
-    private static String describe(Exception e) {
+    static String describe(Throwable e) {
         String message = e.getMessage();
         return message != null ? message : e.getClass().getSimpleName();
     }
@@ -190,7 +155,7 @@ public final class ThemeSection {
             try {
                 work.run();
             } catch (RuntimeException e) {
-                Log.w("Spicetify", "Theme gallery result could not be shown", e);
+                Log.w("Spicetify", "Download result could not be shown", e);
             }
         });
     }
