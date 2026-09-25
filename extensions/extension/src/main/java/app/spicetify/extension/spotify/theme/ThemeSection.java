@@ -2,7 +2,10 @@ package app.spicetify.extension.spotify.theme;
 
 import android.app.AlertDialog;
 import android.content.Context;
+import android.os.Handler;
+import android.os.Looper;
 import android.text.InputType;
+import android.util.Log;
 import android.view.View;
 import android.view.ViewGroup;
 import android.widget.Button;
@@ -10,11 +13,16 @@ import android.widget.EditText;
 import android.widget.LinearLayout;
 import android.widget.Toast;
 import app.spicetify.extension.spotify.settings.SpicetifySettingsScreen;
+import java.io.FileNotFoundException;
 import java.util.List;
 import java.util.Locale;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
 
 /** The Theme part of the Spicetify settings screen. */
 public final class ThemeSection {
+    private static final ExecutorService NETWORK = Executors.newSingleThreadExecutor();
+
     private static final String[][] PRESETS = {
             {ThemePresets.STOCK, "Spotify default"},
             {ThemePresets.AMOLED, "AMOLED black"},
@@ -43,6 +51,7 @@ public final class ThemeSection {
             addButton(section, preset[1], () ->
                     apply(context, ThemeState.Selection.preset(preset[0], preset[1]), onApplied));
         }
+        addButton(section, "Browse Spicetify themes", () -> browse(context, onApplied));
         addButton(section, "Paste a Spicetify theme", () -> paste(context, onApplied));
         section.addView(SpicetifySettingsScreen.text(
                 context, "Some colors change after Spotify restarts.", false));
@@ -124,5 +133,51 @@ public final class ThemeSection {
     static void error(Context context, String message) {
         new AlertDialog.Builder(context).setTitle("Theme not applied").setMessage(message)
                 .setPositiveButton("OK", null).show();
+    }
+
+    private static void browse(Context context, Runnable onApplied) {
+        Toast.makeText(context, "Loading Spicetify themes", Toast.LENGTH_SHORT).show();
+        NETWORK.execute(() -> {
+            try {
+                List<String> themes = ThemeGallery.parseListing(ThemeGallery.HTTP.get(ThemeGallery.LISTING_URL));
+                onMain(() -> {
+                    String[] names = themes.toArray(new String[0]);
+                    new AlertDialog.Builder(context).setTitle("Spicetify themes")
+                            .setItems(names, (dialog, which) -> download(context, names[which], onApplied))
+                            .setNegativeButton("Cancel", null).show();
+                });
+            } catch (Exception e) {
+                onMain(() -> error(context, "Couldn't load the theme list: " + e.getMessage()));
+            }
+        });
+    }
+
+    private static void download(Context context, String theme, Runnable onApplied) {
+        NETWORK.execute(() -> {
+            try {
+                List<SpicetifyTheme.Scheme> schemes = SpicetifyTheme.parse(ThemeGallery.HTTP.get(ThemeGallery.colorIniUrl(theme)));
+                onMain(() -> chooseScheme(context, schemes, "button", theme, onApplied));
+            } catch (FileNotFoundException e) {
+                onMain(() -> error(context, theme + " has no color schemes to use on Android."));
+            } catch (ThemeException e) {
+                onMain(() -> error(context, theme + ": " + e.getMessage()));
+            } catch (Exception e) {
+                onMain(() -> error(context, "Couldn't download " + theme + ": " + e.getMessage()));
+            }
+        });
+    }
+
+    /**
+     * Shows a download's result on the main thread. Spotify's screen can be gone by then (the user
+     * left it, or the activity was recreated), and showing a dialog on it would crash Spotify.
+     */
+    private static void onMain(Runnable work) {
+        new Handler(Looper.getMainLooper()).post(() -> {
+            try {
+                work.run();
+            } catch (RuntimeException e) {
+                Log.w("Spicetify", "Theme gallery result could not be shown", e);
+            }
+        });
     }
 }
