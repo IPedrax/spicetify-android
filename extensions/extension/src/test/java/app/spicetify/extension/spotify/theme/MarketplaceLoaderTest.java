@@ -40,6 +40,11 @@ public class MarketplaceLoaderTest {
             new Marketplace.Repo("bad", "two", "main", "https://github.com/bad/two", 20);
     private static final Marketplace.Repo THREE =
             new Marketplace.Repo("c", "three", "main", "https://github.com/c/three", 10);
+    private static final Marketplace.Repo FOUR =
+            new Marketplace.Repo("d", "four", "main", "https://github.com/d/four", 20);
+    private static final Marketplace.Repo FIVE =
+            new Marketplace.Repo("e", "five", "main", "https://github.com/e/five", 10);
+    private static final String EXTENSIONS_SEARCH = Marketplace.searchUrl(Marketplace.EXTENSIONS_TOPIC);
 
     @Rule public TemporaryFolder tempFolder = new TemporaryFolder();
 
@@ -51,6 +56,8 @@ public class MarketplaceLoaderTest {
     @Before
     public void setUp() {
         cacheFile = new File(tempFolder.getRoot(), "marketplace.json");
+        // No extension repositories unless a test adds some, so a test about themes gets a complete list.
+        responses.put(EXTENSIONS_SEARCH + "1", searchJson(0, Collections.emptyList()));
     }
 
     private Marketplace.Fetcher fetcher() {
@@ -96,6 +103,10 @@ public class MarketplaceLoaderTest {
         return "{\"name\":\"" + name + "\",\"description\":\"d\",\"usercss\":\"u.css\",\"schemes\":\"c.ini\"}";
     }
 
+    private static String extensionJson(String name) {
+        return "{\"name\":\"" + name + "\",\"description\":\"d\",\"main\":\"x.js\"}";
+    }
+
     /** Blacklist, a 3-repo search page, and manifests for everything but the blacklisted repo. */
     private void putFreshData() {
         responses.put(Marketplace.BLACKLIST_URL, BLACKLIST);
@@ -104,22 +115,60 @@ public class MarketplaceLoaderTest {
         responses.put(Marketplace.manifestUrl(THREE), "[" + themeJson("Three A") + "," + themeJson("Three B") + "]");
     }
 
+    /**
+     * Theme repositories ONE and THREE, and extension repositories FOUR and FIVE. THREE is tagged with
+     * both topics, and the blacklisted TWO turns up among the extensions.
+     */
+    private void putBothTopics() {
+        responses.put(Marketplace.BLACKLIST_URL, BLACKLIST);
+        responses.put(Marketplace.SEARCH_URL + "1", searchJson(2, Arrays.asList(ONE, THREE)));
+        responses.put(EXTENSIONS_SEARCH + "1", searchJson(4, Arrays.asList(FOUR, TWO, THREE, FIVE)));
+        responses.put(Marketplace.manifestUrl(ONE), themeJson("One"));
+        responses.put(Marketplace.manifestUrl(THREE), themeJson("Three"));
+        responses.put(Marketplace.manifestUrl(FOUR), extensionJson("Four"));
+        responses.put(Marketplace.manifestUrl(FIVE), extensionJson("Five"));
+    }
+
+    private static List<String> titles(List<Marketplace.Theme> themes) {
+        List<String> titles = new ArrayList<>();
+        for (Marketplace.Theme theme : themes) titles.add(theme.title);
+        return titles;
+    }
+
+    private static List<Marketplace.Kind> kinds(List<Marketplace.Theme> themes) {
+        List<Marketplace.Kind> kinds = new ArrayList<>();
+        for (Marketplace.Theme theme : themes) kinds.add(theme.kind);
+        return kinds;
+    }
+
     private static final class Recorder implements MarketplaceLoader.Listener {
         List<Marketplace.Theme> lastThemes;
         boolean lastDone;
         int themeCalls;
         String error;
+        String notice;
+        /** Whether the notice came while the terminal call was still to come. */
+        boolean noticeBeforeDone;
+        /** Every list before the terminal one, in the order they came. */
+        final List<List<Marketplace.Theme>> updates = new ArrayList<>();
 
         @Override
         public void onThemes(List<Marketplace.Theme> themes, boolean done) {
             lastThemes = themes;
             lastDone = done;
             themeCalls++;
+            if (!done) updates.add(themes);
         }
 
         @Override
         public void onError(String message) {
             error = message;
+        }
+
+        @Override
+        public void onNotice(String message) {
+            notice = message;
+            noticeBeforeDone = !lastDone;
         }
     }
 
@@ -399,5 +448,129 @@ public class MarketplaceLoaderTest {
 
         assertEquals("no callback should follow the terminal one", 1, listener.themeCalls);
         assertFalse("a task that starts after the load ended downloads nothing", requested.contains(Marketplace.manifestUrl(ONE)));
+    }
+
+    @Test
+    public void bothTopics_readEachManifestOnce_andListBothKindsByStars() throws Exception {
+        putBothTopics();
+
+        Recorder listener = new Recorder();
+        loader().load(false, listener);
+
+        assertNull(listener.error);
+        assertNull(listener.notice);
+        assertTrue(listener.lastDone);
+        int manifests = 0;
+        for (String url : requested) {
+            if (url.endsWith("/manifest.json")) manifests++;
+        }
+        assertEquals("THREE's manifest is read once, and blacklisted TWO's never", 4, manifests);
+        // Most stars first. FIVE ties with THREE and follows it: extension orders come after theme orders.
+        assertEquals(Arrays.asList("One", "Four", "Three", "Five"), titles(listener.lastThemes));
+        assertEquals(Arrays.asList(Marketplace.Kind.THEME, Marketplace.Kind.EXTENSION, Marketplace.Kind.THEME,
+                Marketplace.Kind.EXTENSION), kinds(listener.lastThemes));
+        assertEquals(4, cached().themes.size());
+    }
+
+    @Test
+    public void themes_arriveBeforeAnyExtension() {
+        putBothTopics();
+
+        Recorder listener = new Recorder();
+        loader().load(false, listener);
+
+        // The extension search waits until every theme manifest is in.
+        assertEquals(Arrays.asList(Marketplace.BLACKLIST_URL, Marketplace.SEARCH_URL + "1",
+                Marketplace.manifestUrl(ONE), Marketplace.manifestUrl(THREE), EXTENSIONS_SEARCH + "1",
+                Marketplace.manifestUrl(FOUR), Marketplace.manifestUrl(FIVE)), requested);
+        List<List<String>> updates = new ArrayList<>();
+        for (List<Marketplace.Theme> update : listener.updates) updates.add(titles(update));
+        assertEquals(Arrays.asList(Arrays.asList("One"), Arrays.asList("One", "Three"),
+                Arrays.asList("One", "Four", "Three"), Arrays.asList("One", "Four", "Three", "Five")), updates);
+    }
+
+    @Test
+    public void aRateLimitedExtensionSearch_reportsTheThemesWithANotice_andDoesNotCache() {
+        putBothTopics();
+        responses.put(EXTENSIONS_SEARCH + "1", "RATE"); // what GitHub's HTTP 403 becomes
+
+        Recorder listener = new Recorder();
+        loader().load(false, listener);
+
+        assertNull(listener.error);
+        assertTrue(listener.lastDone);
+        assertEquals(Arrays.asList("One", "Three"), titles(listener.lastThemes));
+        assertEquals("Extensions couldn't load: GitHub's rate limit was reached. Try again in a few minutes.",
+                listener.notice);
+        assertTrue("the notice comes before the terminal call", listener.noticeBeforeDone);
+        assertFalse(cacheFile.exists());
+    }
+
+    @Test
+    public void aFailedExtensionSearch_withACache_deliversTheCachedList_andTheNotice() throws Exception {
+        putBothTopics();
+        loader().load(false, new Recorder()); // populates the cache
+        long savedAt = now[0];
+
+        now[0] += ONE_HOUR_MILLIS;
+        responses.put(EXTENSIONS_SEARCH + "1", "FAIL");
+        Recorder listener = new Recorder();
+        loader().load(true, listener);
+
+        assertNull(listener.error);
+        assertTrue(listener.lastDone);
+        assertEquals(4, listener.lastThemes.size()); // the cached list, extensions included
+        assertEquals("Extensions couldn't load: Connection reset", listener.notice);
+        assertEquals(savedAt, cached().savedAt);
+    }
+
+    @Test
+    public void anExtensionPhaseTimeout_keepsTheThemes_andDoesNotCacheThem() {
+        putBothTopics();
+        List<Runnable> extensionTasks = new ArrayList<>();
+        // Theme manifests run at once; extension manifests wait for the test, so only the second phase times out.
+        Executor themesNowExtensionsLater = task -> {
+            if (requested.contains(EXTENSIONS_SEARCH + "1")) {
+                extensionTasks.add(task);
+            } else {
+                task.run();
+            }
+        };
+
+        Recorder listener = new Recorder();
+        loader(themesNowExtensionsLater, 50).load(false, listener);
+
+        assertNull(listener.error);
+        assertTrue(listener.lastDone);
+        assertEquals(Arrays.asList("One", "Three"), titles(listener.lastThemes));
+        assertFalse("the timed-out run must not cache a partial list", cacheFile.exists());
+        assertEquals("FOUR and FIVE waited", 2, extensionTasks.size());
+
+        int calls = listener.themeCalls;
+        for (Runnable task : extensionTasks) {
+            task.run();
+        }
+
+        assertEquals("no callback should follow the terminal one", calls, listener.themeCalls);
+        assertFalse("a task that starts after the load ended downloads nothing",
+                requested.contains(Marketplace.manifestUrl(FOUR)));
+    }
+
+    @Test
+    public void aCacheRoundTrip_keepsBothKinds() {
+        putBothTopics();
+        loader().load(false, new Recorder()); // populates the cache
+
+        now[0] += ONE_HOUR_MILLIS;
+        responses.clear();
+        requested.clear();
+        Recorder listener = new Recorder();
+        loader().load(false, listener);
+
+        assertTrue(requested.isEmpty());
+        assertEquals(Arrays.asList("One", "Four", "Three", "Five"), titles(listener.lastThemes));
+        assertEquals(Arrays.asList(Marketplace.Kind.THEME, Marketplace.Kind.EXTENSION, Marketplace.Kind.THEME,
+                Marketplace.Kind.EXTENSION), kinds(listener.lastThemes));
+        assertEquals(Marketplace.resolve("x.js", FOUR, "main"), listener.lastThemes.get(1).mainUrl);
     }
 }

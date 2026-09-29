@@ -375,10 +375,14 @@ final class Marketplace {
         return name.isEmpty() ? repo.owner : name;
     }
 
-    /** GitHub's star order, then manifest order. */
+    /**
+     * Most stars first, then {@link Theme#order}, which is GitHub's order and then manifest order. The
+     * stars come first so that themes and extensions, found by two searches, mix by popularity.
+     */
     static List<Theme> sorted(Collection<Theme> themes) {
         List<Theme> list = new ArrayList<>(themes);
-        Collections.sort(list, (a, b) -> Integer.compare(a.order, b.order));
+        Collections.sort(list, (a, b) -> a.stars != b.stars ? Integer.compare(b.stars, a.stars)
+                : Integer.compare(a.order, b.order));
         return list;
     }
 
