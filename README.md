@@ -1,7 +1,14 @@
-# Spicetify Android patches
+# Spicetify Android patches (IPedrax)
 
 Spotify Android customizations for use with [Morphe](https://morphe.software/).
 This repository publishes patch source and bundles, not Spotify APKs.
+
+This is a personal build of
+[spicetify/morphe-patches](https://github.com/spicetify/morphe-patches), not the
+official Spicetify source. It adds features that aren't upstream yet: the
+Spicetify Marketplace, themes that bring their own background image (Galaxy V2,
+Hazy, CyberNight and others), and Spotify's Compose screens (Library, playlist
+headers) following the theme.
 
 <!-- prettier-ignore -->
 > [!NOTE]
@@ -9,7 +16,7 @@ This repository publishes patch source and bundles, not Spotify APKs.
 > The initial target is Spotify 9.1.80.2221, ARM64. Runtime compatibility is
 > still being verified. See the [verification record](docs/verification.md).
 
-[**➕ Add Spicetify to Morphe**](https://morphe.software/add-source?github=spicetify/morphe-patches/tree/dev)
+[**➕ Add these patches to Morphe Manager**](https://morphe.software/add-source?github=IPedrax/spicetify-android/tree/dev)
 
 Open this link on Android with Morphe Manager installed to add the
 experimental source.
@@ -23,7 +30,7 @@ See [optional feature setup and limits](docs/optional-features.md).
 | Patch | Default | Behavior |
 | --- | --- | --- |
 | Clean sharing links | Enabled | Removes `si`, `pi`, and known `utm_*` parameters from `open.spotify.com` links. Preserves timestamps, context, other parameters, and fragments. |
-| Theme colors | Disabled | Adds a theme picker to Spicetify settings: AMOLED black, Material You, and Spicetify themes from the Spicetify Marketplace or pasted. Requires Android 14 or later. See [Theme colors](docs/theme.md). |
+| Theme colors | Disabled | Adds a theme picker to Spicetify settings: AMOLED black, Material You, and Spicetify themes from the Spicetify Marketplace (with their background images) or pasted. Requires Android 14 or later. See [Theme colors](docs/theme.md). |
 | Pin shortcuts on Home | Disabled | Moves selected native Home shortcuts first. Configure pins in Spotify's Spicetify settings, then restart Spotify. |
 | Local files from a server | Disabled | Streams an HTTPS WebDAV folder into Local Files. Requires Android 8 or later and byte-range support; configure the server in Spotify's Spicetify settings. Not available for root mount installs, because its content provider must be in the manifest. |
 
@@ -52,13 +59,10 @@ See [optional feature setup and limits](docs/optional-features.md).
 
 ## Try the experimental source
 
-The current [experimental release](https://github.com/spicetify/morphe-patches/releases/tag/v1.0.0-dev.4)
-is `1.0.0-dev.4`. Manager 1.31.1 downloads all four patches, and its default
-profile was patched and installed on a Pixel 8 while preserving login and
-the sharing setting. Runtime testing also covers Home pinning, synthetic
-server playback and seeking, interrupted scans, and recovery on that device.
-See the exact tested artifacts and remaining checks in the
-[verification record](docs/verification.md). There is no stable release.
+Releases are on the [releases page](https://github.com/IPedrax/spicetify-android/releases).
+This build runs on a POCO X6 Pro (Android 16, root mount install). The
+[verification record](docs/verification.md) covers the upstream patches.
+There is no stable release.
 
 Use a spare Android device or emulator for the initial tests. A patched APK
 uses a different signing certificate from stock Spotify. Installing it with
@@ -66,7 +70,7 @@ the same package name requires removing stock Spotify first, which removes
 its local app data and downloads. Keep Manager's signing key for future
 updates; a different key requires another uninstall.
 
-Use the **Add Spicetify to Morphe** link above, then confirm the source in
+Use the **Add these patches to Morphe Manager** link above, then confirm the source in
 Manager. If you already added this repository manually, keep that source
 instead of adding it again. To add it manually and patch Spotify:
 
@@ -74,10 +78,10 @@ instead of adding it again. To add it manually and patch Spotify:
 2. Paste the following source URL, then select **Add**.
 
    ```text
-   https://raw.githubusercontent.com/spicetify/morphe-patches/refs/heads/dev/patches-bundle.json
+   https://raw.githubusercontent.com/IPedrax/spicetify-android/refs/heads/dev/patches-bundle.json
    ```
 
-3. Expand **Spicetify Android patches** and enable **Experimental app versions**.
+3. Expand **Spicetify Android patches (IPedrax)** and enable **Experimental app versions**.
 4. Return to the app list. Spotify appears with the target version
    `9.1.80.2221`, ARM64 build `145767611`.
 5. Optional: To select colors, Home pins, or server files, open
