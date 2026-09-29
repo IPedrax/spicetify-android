@@ -15,6 +15,7 @@ import java.net.ServerSocket;
 import java.net.Socket;
 import java.nio.charset.StandardCharsets;
 import java.util.Arrays;
+import java.util.Collections;
 import java.util.List;
 import org.junit.Test;
 import org.junit.runner.RunWith;
@@ -87,6 +88,23 @@ public class MarketplaceTest {
     }
 
     @Test
+    public void resolvesTheUserCssAndIncludesLikeTheSchemes() throws Exception {
+        // include may be one path or an array of them; entries that aren't strings are skipped.
+        List<Marketplace.Theme> themes = Marketplace.parseManifest("["
+                + "{\"name\":\"Galaxy\",\"description\":\"d\",\"usercss\":\"user.css\",\"schemes\":\"color.ini\",\"include\":"
+                + "[\"https://raw.githubusercontent.com/harbassan/spicetify-galaxy/main/theme.js\",3,null,\"extra.js\"]},"
+                + "{\"name\":\"Hazy\",\"description\":\"d\",\"usercss\":\"https://cdn.jsdelivr.net/gh/astromations/hazy/app.css\","
+                + "\"schemes\":\"color.ini\",\"branch\":\"dev\",\"include\":\"hazy.js\"},"
+                + "{\"name\":\"Plain\",\"description\":\"d\",\"usercss\":\"user.css\",\"schemes\":\"color.ini\"}]", GALAXY, 0);
+        assertEquals("https://raw.githubusercontent.com/harbassan/spicetify-galaxy/main/user.css", themes.get(0).usercssUrl);
+        assertEquals(Arrays.asList("https://raw.githubusercontent.com/harbassan/spicetify-galaxy/main/theme.js",
+                "https://raw.githubusercontent.com/harbassan/spicetify-galaxy/main/extra.js"), themes.get(0).includeUrls);
+        assertEquals("https://cdn.jsdelivr.net/gh/astromations/hazy/app.css", themes.get(1).usercssUrl);
+        assertEquals(Arrays.asList("https://raw.githubusercontent.com/harbassan/spicetify-galaxy/dev/hazy.js"), themes.get(1).includeUrls);
+        assertTrue(themes.get(2).includeUrls.isEmpty());
+    }
+
+    @Test
     public void capsUntrustedManifestData() throws Exception {
         String long150 = repeat('t', 150);
         StringBuilder manifest = new StringBuilder("[");
@@ -114,9 +132,9 @@ public class MarketplaceTest {
 
     @Test
     public void sortsByStarOrderThenManifestOrder() {
-        Marketplace.Theme first = new Marketplace.Theme("a", "d", "o", null, "s", "r", 9, 0, null);
-        Marketplace.Theme second = new Marketplace.Theme("b", "d", "o", null, "s", "r", 9, 1, null);
-        Marketplace.Theme third = new Marketplace.Theme("c", "d", "o", null, "s", "r", 5, 1000, null);
+        Marketplace.Theme first = new Marketplace.Theme("a", "d", "o", null, "s", "r", 9, 0, null, "u", Collections.emptyList());
+        Marketplace.Theme second = new Marketplace.Theme("b", "d", "o", null, "s", "r", 9, 1, null, "u", Collections.emptyList());
+        Marketplace.Theme third = new Marketplace.Theme("c", "d", "o", null, "s", "r", 5, 1000, null, "u", Collections.emptyList());
         assertEquals(Arrays.asList(first, second, third), Marketplace.sorted(Arrays.asList(third, first, second)));
     }
 
@@ -169,7 +187,7 @@ public class MarketplaceTest {
     @Test
     public void roundTripsTheCache() throws Exception {
         List<Marketplace.Theme> themes = Marketplace.parseManifest("{\"name\":\"Galaxy\",\"description\":\"d\","
-                + "\"usercss\":\"u.css\",\"schemes\":\"c.ini\"}", GALAXY, 2);
+                + "\"usercss\":\"u.css\",\"schemes\":\"c.ini\",\"include\":\"theme.js\"}", GALAXY, 2);
         Marketplace.Cached cached = Marketplace.fromJson(Marketplace.toJson(themes, 1234L));
         assertEquals(1234L, cached.savedAt);
         Marketplace.Theme theme = cached.themes.get(0);
@@ -177,6 +195,18 @@ public class MarketplaceTest {
         assertEquals(themes.get(0).schemesUrl, theme.schemesUrl);
         assertNull(theme.previewUrl);
         assertEquals(themes.get(0).order, theme.order);
+        assertEquals(themes.get(0).usercssUrl, theme.usercssUrl);
+        assertEquals(themes.get(0).includeUrls, theme.includeUrls);
+    }
+
+    @Test
+    public void aCacheWrittenBeforeUserCssAndIncludesWereKeptStillLoads() throws Exception {
+        Marketplace.Theme theme = Marketplace.fromJson("{\"savedAt\":1,\"themes\":[{\"title\":\"Galaxy\",\"description\":\"d\","
+                + "\"author\":\"harbassan\",\"preview\":null,\"schemes\":\"https://example.com/c.ini\","
+                + "\"repo\":\"https://github.com/harbassan/spicetify-galaxy\",\"stars\":612,\"order\":0}]}").themes.get(0);
+        assertEquals("Galaxy", theme.title);
+        assertNull(theme.usercssUrl); // so it has no image to find
+        assertTrue(theme.includeUrls.isEmpty());
     }
 
     private static String repeat(char c, int count) {

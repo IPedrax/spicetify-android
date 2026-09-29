@@ -1,5 +1,6 @@
 package app.spicetify.extension.spotify.theme;
 
+import static org.junit.Assert.assertArrayEquals;
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertNotNull;
@@ -12,6 +13,7 @@ import android.app.Dialog;
 import android.content.Context;
 import android.database.DataSetObserver;
 import android.os.Looper;
+import android.util.Base64;
 import android.view.ContextThemeWrapper;
 import android.view.View;
 import android.view.ViewGroup;
@@ -24,6 +26,7 @@ import android.widget.TextView;
 import java.io.File;
 import java.io.FileNotFoundException;
 import java.io.IOException;
+import java.nio.file.Files;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.HashMap;
@@ -414,5 +417,71 @@ public class MarketplaceScreenTest {
         assertEquals("Couldn't download Galaxy V2's background image: HTTP 500 for "
                 + Marketplace.GALAXY_V2.backgroundUrl, latestAlertMessage());
         assertFalse(ThemeBackground.hasImage(context));
+    }
+
+    @Test
+    public void aThemeBringsTheImageItsScriptNamesAndAThemeWithoutOneClearsIt() {
+        putTwoThemes();
+        responses.put(Marketplace.manifestUrl(REPO_A), "{\"name\":\"Aurora\",\"description\":\"A vivid theme\","
+                + "\"usercss\":\"u.css\",\"schemes\":\"color.ini\",\"include\":[\"missing.js\",\"hazy.js\"]}");
+        responses.put(Marketplace.resolve("hazy.js", REPO_A, "main"), "const defImage = \"https://i.imgur.com/Wl2D0h0.png\";");
+        responses.put(Marketplace.resolve("color.ini", REPO_A, "main"), GALAXY_COLOR_INI);
+        responses.put(Marketplace.resolve("color.ini", REPO_B, "main"), GALAXY_COLOR_INI);
+        responses.put(Marketplace.resolve("u.css", REPO_B, "main"), ".Root__main-view { background-color: transparent; }");
+        byte[] png = ThemeBackgroundTest.png();
+        images = url -> {
+            requested.add(url);
+            return png;
+        };
+        ListView list = find(showScreen().getWindow().getDecorView(), ListView.class);
+
+        tap(list, 1);
+        idle();
+        // missing.js failing to download only means it names no image, and the script's image wins over user.css.
+        assertEquals("https://i.imgur.com/Wl2D0h0.png", requested.get(requested.size() - 1));
+        assertFalse(requested.contains(Marketplace.resolve("u.css", REPO_A, "main")));
+        // Saved, so applyScheme made the colors see-through; unpatched, select then fails.
+        assertTrue(ThemeBackground.hasImage(context));
+        assertEquals("This device couldn't apply the theme.", latestAlertMessage());
+
+        tap(list, 2);
+        idle();
+        assertFalse(ThemeBackground.hasImage(context));
+    }
+
+    @Test
+    public void aThemeBringsAnImageItsCssHoldsAsADataUri() throws IOException {
+        putTwoThemes();
+        byte[] png = ThemeBackgroundTest.png();
+        responses.put(Marketplace.resolve("color.ini", REPO_A, "main"), GALAXY_COLOR_INI);
+        responses.put(Marketplace.resolve("u.css", REPO_A, "main"), ".Root__top-container { background-image: "
+                + "url(\"data:image/png;base64," + Base64.encodeToString(png, Base64.NO_WRAP) + "\") !important; }");
+        ListView list = find(showScreen().getWindow().getDecorView(), ListView.class);
+
+        tap(list, 1);
+        idle();
+
+        assertArrayEquals(png, Files.readAllBytes(new File(context.getFilesDir(), "spicetify_background").toPath()));
+    }
+
+    @Test
+    public void aThemesOwnImageThatFailsToDownloadIsLeftOutWithAToast() throws IOException {
+        putTwoThemes();
+        ThemeBackground.save(context, ThemeBackgroundTest.png()); // from the theme before
+        responses.put(Marketplace.resolve("color.ini", REPO_A, "main"), GALAXY_COLOR_INI);
+        responses.put(Marketplace.resolve("u.css", REPO_A, "main"), ".Root { background: url(bg.jpg); }");
+        images = url -> {
+            throw new IOException("HTTP 500 for " + url);
+        };
+        ListView list = find(showScreen().getWindow().getDecorView(), ListView.class);
+
+        tap(list, 1);
+        idle();
+
+        assertEquals("Couldn't load Aurora's background image: HTTP 500 for "
+                + Marketplace.resolve("bg.jpg", REPO_A, "main"), ShadowToast.getTextOfLatestToast());
+        // The theme still applied, without an image.
+        assertFalse(ThemeBackground.hasImage(context));
+        assertEquals("This device couldn't apply the theme.", latestAlertMessage());
     }
 }
