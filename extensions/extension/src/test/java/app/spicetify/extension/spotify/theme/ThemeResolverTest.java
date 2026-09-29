@@ -74,6 +74,23 @@ public class ThemeResolverTest {
     }
 
     @Test
+    public void seeThroughClearsMainAndKeepsAQuarterOfCard() {
+        // Galaxy's [base] scheme, which desktop Spicetify shows over its background image.
+        Map<String, Integer> opaque = ThemeResolver.resolve(scheme("text", 0xFFFFFFFF, "main", 0xFF000000,
+                "card", 0xFF000000, "button", 0xFFF1F1F1), "button").colors;
+        Map<String, Integer> expected = new LinkedHashMap<>(opaque);
+        expected.put("main", 0x00000000);
+        expected.put("card", 0x40000000);
+        assertEquals(expected, ThemeResolver.seeThrough(opaque));
+        // Surfaces derived from main come from the opaque color.
+        assertEquals(Integer.valueOf(0xFF0F0F0F), expected.get("main-elevated"));
+
+        Map<String, Integer> colors = ThemeResolver.seeThrough(scheme("main", 0xFF123456, "card", 0xCC654321));
+        assertEquals(Integer.valueOf(0x00123456), colors.get("main"));
+        assertEquals(Integer.valueOf(0x40654321), colors.get("card"));
+    }
+
+    @Test
     public void warnsAboutUnreadableTextAndLightBackgrounds() {
         List<String> warnings = ThemeResolver.warnings(ThemeResolver.resolve(
                 scheme("main", 0xFFF5F7FA, "text", 0xFFFFFFFF, "misc", 0xFF000000), "button"));

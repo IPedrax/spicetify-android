@@ -13,6 +13,8 @@ import android.view.ViewGroup;
 import android.widget.Button;
 import android.widget.LinearLayout;
 import android.widget.TextView;
+import java.io.IOException;
+import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.concurrent.atomic.AtomicBoolean;
@@ -22,6 +24,7 @@ import org.robolectric.RobolectricTestRunner;
 import org.robolectric.RuntimeEnvironment;
 import org.robolectric.Shadows;
 import org.robolectric.annotation.Config;
+import org.robolectric.annotation.GraphicsMode;
 import org.robolectric.shadows.ShadowAlertDialog;
 
 @RunWith(RobolectricTestRunner.class)
@@ -77,7 +80,7 @@ public class ThemeSectionTest {
     public void applySchemeThatResolvesFineEndsInTheNotAppliedDialog() {
         AtomicBoolean applied = new AtomicBoolean();
         SpicetifyTheme.Scheme scheme = SpicetifyTheme.parse("[mocha]\nmain = 1e1e2e").get(0);
-        ThemeSection.applyScheme(context, scheme, null, "Pasted theme", () -> applied.set(true));
+        ThemeSection.applyScheme(context, scheme, null, "Pasted theme", null, () -> applied.set(true));
         assertFalse(applied.get());
 
         AlertDialog dialog = ShadowAlertDialog.getLatestAlertDialog();
@@ -89,7 +92,7 @@ public class ThemeSectionTest {
     @Test
     public void applySchemeWithAMissingAccentKeyShowsTheResolversMessage() {
         SpicetifyTheme.Scheme scheme = SpicetifyTheme.parse("[mocha]\nmain = 1e1e2e").get(0);
-        ThemeSection.applyScheme(context, scheme, "peach", "Pasted theme", () -> {});
+        ThemeSection.applyScheme(context, scheme, "peach", "Pasted theme", null, () -> {});
 
         AlertDialog dialog = ShadowAlertDialog.getLatestAlertDialog();
         assertNotNull(dialog);
@@ -100,7 +103,7 @@ public class ThemeSectionTest {
     @Test
     public void applySchemeWithNoColorsShowsAnErrorAndDoesNotApply() {
         SpicetifyTheme.Scheme scheme = SpicetifyTheme.parse("[turntable]\n").get(0);
-        ThemeSection.applyScheme(context, scheme, null, "Pasted theme", () -> {});
+        ThemeSection.applyScheme(context, scheme, null, "Pasted theme", null, () -> {});
 
         AlertDialog dialog = ShadowAlertDialog.getLatestAlertDialog();
         assertNotNull(dialog);
@@ -112,7 +115,7 @@ public class ThemeSectionTest {
     @Test
     public void chooseSchemeWithTwoSchemesListsThemInOrder() {
         List<SpicetifyTheme.Scheme> schemes = SpicetifyTheme.parse("[mocha]\nmain = 1e1e2e\n[latte]\nmain = eff1f5");
-        ThemeSection.chooseScheme(context, schemes, null, "Pasted theme", () -> {});
+        ThemeSection.chooseScheme(context, schemes, null, "Pasted theme", null, () -> {});
 
         AlertDialog dialog = ShadowAlertDialog.getLatestAlertDialog();
         assertNotNull(dialog);
@@ -126,11 +129,49 @@ public class ThemeSectionTest {
     @Test
     public void chooseSchemeWithOneSchemeAppliesItWithoutAChooser() {
         List<SpicetifyTheme.Scheme> schemes = SpicetifyTheme.parse("[mocha]\nmain = 1e1e2e");
-        ThemeSection.chooseScheme(context, schemes, null, "Pasted theme", () -> {});
+        ThemeSection.chooseScheme(context, schemes, null, "Pasted theme", null, () -> {});
 
         AlertDialog dialog = ShadowAlertDialog.getLatestAlertDialog();
         assertNotNull(dialog);
         assertEquals("Theme not applied", Shadows.shadowOf(dialog).getTitle());
+    }
+
+    @Test
+    public void aPresetClearsTheBackgroundImage() throws IOException {
+        ThemeBackground.save(context, ThemeBackgroundTest.png());
+        button(ThemeSection.create(context, true, () -> {}), "AMOLED black").performClick();
+        assertFalse(ThemeBackground.hasImage(context));
+    }
+
+    @Test
+    public void aSchemeWithAnImageSavesItBeforeApplying() {
+        SpicetifyTheme.Scheme scheme = SpicetifyTheme.parse("[base]\nmain = 000000\ncard = 000000").get(0);
+        ThemeSection.applyScheme(context, scheme, null, "Galaxy V2", ThemeBackgroundTest.png(), () -> {});
+
+        assertTrue(ThemeBackground.hasImage(context));
+        // Unpatched, the extension has no role table, so select fails once the image is saved.
+        assertEquals("This device couldn't apply the theme.",
+                Shadows.shadowOf(ShadowAlertDialog.getLatestAlertDialog()).getMessage());
+    }
+
+    @Test
+    @GraphicsMode(GraphicsMode.Mode.NATIVE) // Android's own decoder, which refuses what isn't an image
+    public void anImageThatCantBeSavedShowsWhyAndAppliesNothing() {
+        SpicetifyTheme.Scheme scheme = SpicetifyTheme.parse("[base]\nmain = 000000").get(0);
+        ThemeSection.applyScheme(context, scheme, null, "Galaxy V2",
+                "<html>Not Found</html>".getBytes(StandardCharsets.UTF_8), () -> {});
+
+        // The latest dialog: select never ran, or it would say this device couldn't apply the theme.
+        assertEquals("Couldn't save the background image: Not an image Android can read",
+                Shadows.shadowOf(ShadowAlertDialog.getLatestAlertDialog()).getMessage());
+        assertFalse(ThemeBackground.hasImage(context));
+    }
+
+    @Test
+    public void offersTheBlurSwitchOnlyWhileAnImageIsSet() throws IOException {
+        assertFalse(texts(ThemeSection.create(context, true, () -> {})).contains("Blur background image"));
+        ThemeBackground.save(context, ThemeBackgroundTest.png());
+        assertTrue(texts(ThemeSection.create(context, true, () -> {})).contains("Blur background image"));
     }
 
     private static List<String> texts(View view) {

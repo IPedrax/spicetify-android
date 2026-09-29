@@ -292,7 +292,7 @@ final class MarketplaceScreen {
                 if (!scheme.colors.isEmpty()) usable.add(scheme);
             }
             if (usable.isEmpty()) return () -> ThemeSection.error(context, theme.title + " has no colors Spotify can use.");
-            return () -> ThemeSection.chooseScheme(context, usable, "button", theme.title, () -> {
+            return () -> ThemeSection.chooseScheme(context, usable, "button", theme.title, null, () -> {
                 dialog.dismiss();
                 onApplied.run();
             });

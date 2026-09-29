@@ -62,6 +62,18 @@ public final class ThemeResolver {
         return new Result(roles);
     }
 
+    /**
+     * The roles over a background image, the way desktop Galaxy's CSS shows one: main turns clear and
+     * card keeps a quarter of its color. Called after {@link #resolve}, so roles derived from main keep
+     * the opaque color.
+     */
+    static Map<String, Integer> seeThrough(Map<String, Integer> roles) {
+        Map<String, Integer> clear = new LinkedHashMap<>(roles);
+        clear.computeIfPresent("main", (role, color) -> color & 0x00FFFFFF);
+        clear.computeIfPresent("card", (role, color) -> (color & 0x00FFFFFF) | 0x40000000);
+        return clear;
+    }
+
     /** Readability warnings, checked against Spotify's stock colors for roles the theme leaves alone. */
     public static List<String> warnings(Result theme) {
         int main = theme.colors.containsKey("main") ? theme.colors.get("main") : STOCK_MAIN;
