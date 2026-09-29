@@ -2,7 +2,7 @@ group = "app.spicetify"
 
 patches {
     about {
-        name = "Spicetify Android patches (IPedrax)"
+        name = "Spicetify Android patches"
         description = "Spotify Android customization patches compatible with Morphe"
         source = "https://github.com/IPedrax/spicetify-android"
         author = "IPedrax"

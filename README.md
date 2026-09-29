@@ -1,4 +1,4 @@
-# Spicetify Android patches (IPedrax)
+# Spicetify Android patches
 
 Spotify for Android, themed the Spicetify way. These are patches for use with
 [Morphe](https://morphe.software/): add this source to Morphe Manager, patch
@@ -74,7 +74,7 @@ split-APK archive, and Morphe Manager.
    https://raw.githubusercontent.com/IPedrax/spicetify-android/refs/heads/main/patches-bundle.json
    ```
 
-2. Expand **Spicetify Android patches (IPedrax)** and enable **Experimental
+2. Expand **Spicetify Android patches** and enable **Experimental
    app versions**.
 3. Open **Settings > Advanced** and turn on **Expert mode**. Without it, Manager
    applies only Clean sharing links.
