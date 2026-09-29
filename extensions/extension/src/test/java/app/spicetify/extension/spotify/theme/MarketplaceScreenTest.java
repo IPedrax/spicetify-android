@@ -4,6 +4,7 @@ import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertNotNull;
 import static org.junit.Assert.assertNull;
+import static org.junit.Assert.assertSame;
 import static org.junit.Assert.assertTrue;
 
 import android.app.AlertDialog;
@@ -50,6 +51,8 @@ public class MarketplaceScreenTest {
             new Marketplace.Repo("ownerA", "repoA", "main", "https://github.com/ownerA/repoA", 100);
     private static final Marketplace.Repo REPO_B =
             new Marketplace.Repo("ownerB", "repoB", "main", "https://github.com/ownerB/repoB", 1);
+    /** Galaxy's own color.ini, in short: one scheme. */
+    private static final String GALAXY_COLOR_INI = "[base]\ntext = FFFFFF\nmain = 000000\ncard = 000000\nbutton = F1F1F1";
 
     private final Context context =
             new ContextThemeWrapper(RuntimeEnvironment.getApplication(), android.R.style.Theme_Material);
@@ -63,9 +66,15 @@ public class MarketplaceScreenTest {
     private PreviewImages previews = new PreviewImages(url -> {
         throw new IOException("no images in tests");
     }, DIRECT);
+    private PreviewImages.Downloader images = url -> {
+        throw new IOException("no images in tests");
+    };
+    /** Every URL the fetcher was asked for, in order; a test's image fetcher can add its own. */
+    private final List<String> requested = new ArrayList<>();
 
     private Marketplace.Fetcher fetcher() {
         return url -> {
+            requested.add(url);
             String value = responses.get(url);
             if (value == null) throw new FileNotFoundException(url);
             return value;
@@ -91,7 +100,7 @@ public class MarketplaceScreenTest {
     private Dialog showScreen() {
         File cache = new File(tempFolder.getRoot(), "cache.json");
         MarketplaceLoader loader = new MarketplaceLoader(fetcher(), DIRECT, cache, () -> 0L);
-        MarketplaceScreen.show(context, loader, previews, background, downloads, fetcher(), () -> {});
+        MarketplaceScreen.show(context, loader, previews, background, downloads, fetcher(), images, () -> {});
         idle();
         return ShadowDialog.getLatestDialog();
     }
@@ -154,11 +163,11 @@ public class MarketplaceScreenTest {
         ListView list = find(dialog.getWindow().getDecorView(), ListView.class);
         assertNotNull(list);
         ListAdapter adapter = list.getAdapter();
-        assertEquals(2, adapter.getCount());
-        assertEquals("Aurora", ((Marketplace.Theme) adapter.getItem(0)).title);
-        assertEquals("Borealis", ((Marketplace.Theme) adapter.getItem(1)).title);
-        assertTrue(visibleTexts(adapter.getView(0, null, list)).contains("ownerA, 100 stars"));
-        assertTrue(visibleTexts(adapter.getView(1, null, list)).contains("ownerB, 1 star"));
+        assertEquals(3, adapter.getCount()); // Galaxy V2, pinned above them
+        assertEquals("Aurora", ((Marketplace.Theme) adapter.getItem(1)).title);
+        assertEquals("Borealis", ((Marketplace.Theme) adapter.getItem(2)).title);
+        assertTrue(visibleTexts(adapter.getView(1, null, list)).contains("ownerA, 100 stars"));
+        assertTrue(visibleTexts(adapter.getView(2, null, list)).contains("ownerB, 1 star"));
 
         EditText search = find(dialog.getWindow().getDecorView(), EditText.class);
         assertNotNull(search);
@@ -217,7 +226,7 @@ public class MarketplaceScreenTest {
 
         loads.remove(0).run();
         idle();
-        assertEquals(2, find(screen, ListView.class).getAdapter().getCount());
+        assertEquals(3, find(screen, ListView.class).getAdapter().getCount());
         texts = visibleTexts(screen);
         assertFalse(texts.contains("Loading themes"));
         assertFalse(texts.contains("Retry"));
@@ -247,9 +256,9 @@ public class MarketplaceScreenTest {
         // repoA's manifest arrives first, but the list only changes once the refresh is done.
         assertTrue(shown.size() >= 3); // the refresh's updates reached the screen
         for (List<String> titles : shown.subList(0, shown.size() - 1)) {
-            assertEquals(Arrays.asList("Aurora", "Borealis"), titles);
+            assertEquals(Arrays.asList("Galaxy V2", "Aurora", "Borealis"), titles);
         }
-        assertEquals(Arrays.asList("Aurora", "Andromeda", "Borealis"), shown.get(shown.size() - 1));
+        assertEquals(Arrays.asList("Galaxy V2", "Aurora", "Andromeda", "Borealis"), shown.get(shown.size() - 1));
     }
 
     @Test
@@ -261,7 +270,7 @@ public class MarketplaceScreenTest {
 
         ListView list = find(dialog.getWindow().getDecorView(), ListView.class);
         assertNotNull(list);
-        tap(list, 0);
+        tap(list, 1);
         idle();
 
         AlertDialog chooser = ShadowAlertDialog.getLatestAlertDialog();
@@ -287,8 +296,8 @@ public class MarketplaceScreenTest {
         button(screen, "Refresh").performClick(); // a load is running from here on
         ListView list = find(screen, ListView.class);
 
-        tap(list, 0);
-        tap(list, 1); // ignored: Aurora is still downloading
+        tap(list, 1);
+        tap(list, 2); // ignored: Aurora is still downloading
         assertEquals(1, themeDownloads.size());
         assertEquals(2, ShadowToast.shownToastCount());
         assertEquals("Loading Aurora", ShadowToast.getTextOfLatestToast());
@@ -297,7 +306,7 @@ public class MarketplaceScreenTest {
         idle();
         assertEquals("Choose a color scheme", Shadows.shadowOf(ShadowAlertDialog.getLatestAlertDialog()).getTitle());
         assertEquals(1, loads.size()); // the chooser didn't wait for the refresh
-        tap(list, 1);
+        tap(list, 2);
         assertEquals(1, themeDownloads.size());
     }
 
@@ -308,7 +317,7 @@ public class MarketplaceScreenTest {
         List<Runnable> themeDownloads = new ArrayList<>();
         downloads = themeDownloads::add;
         Dialog dialog = showScreen();
-        tap(find(dialog.getWindow().getDecorView(), ListView.class), 0);
+        tap(find(dialog.getWindow().getDecorView(), ListView.class), 1);
 
         dialog.dismiss();
         themeDownloads.remove(0).run();
@@ -344,12 +353,66 @@ public class MarketplaceScreenTest {
         responses.put(Marketplace.resolve("color.ini", REPO_B, "main"), "; only a comment");
         ListView list = find(showScreen().getWindow().getDecorView(), ListView.class);
 
-        tap(list, 0);
+        tap(list, 1);
         idle();
         assertEquals("Aurora has no color schemes to use on Android.", latestAlertMessage());
 
-        tap(list, 1);
+        tap(list, 2);
         idle();
         assertEquals("Borealis: No color schemes found", latestAlertMessage());
+    }
+
+    @Test
+    public void pinsGalaxyV2AboveTheGitHubResultsAndSearchFindsIt() {
+        putTwoThemes();
+        View screen = showScreen().getWindow().getDecorView();
+        ListView list = find(screen, ListView.class);
+
+        Marketplace.Theme galaxy = (Marketplace.Theme) list.getAdapter().getItem(0);
+        assertEquals("Galaxy V2", galaxy.title);
+        // Its stars aren't known, so its row names the author alone.
+        assertTrue(visibleTexts(list.getAdapter().getView(0, null, list)).contains("harbassan"));
+
+        find(screen, EditText.class).setText("galaxy");
+        assertEquals(1, list.getAdapter().getCount());
+        assertSame(galaxy, list.getAdapter().getItem(0));
+    }
+
+    @Test
+    public void tappingGalaxyV2DownloadsItsImageAfterItsSchemesAndAppliesBoth() {
+        putTwoThemes();
+        responses.put(Marketplace.GALAXY_V2.schemesUrl, GALAXY_COLOR_INI);
+        byte[] png = ThemeBackgroundTest.png();
+        images = url -> {
+            requested.add(url);
+            return png;
+        };
+        ListView list = find(showScreen().getWindow().getDecorView(), ListView.class);
+
+        tap(list, 0);
+        idle();
+
+        assertEquals(Arrays.asList(Marketplace.GALAXY_V2.schemesUrl, Marketplace.GALAXY_V2.backgroundUrl),
+                requested.subList(requested.size() - 2, requested.size()));
+        assertTrue(ThemeBackground.hasImage(context));
+        // Unpatched, the extension has no role table, so select fails once the image is saved.
+        assertEquals("This device couldn't apply the theme.", latestAlertMessage());
+    }
+
+    @Test
+    public void aBackgroundImageThatFailsToDownloadAppliesNothing() {
+        putTwoThemes();
+        responses.put(Marketplace.GALAXY_V2.schemesUrl, GALAXY_COLOR_INI);
+        images = url -> {
+            throw new IOException("HTTP 500 for " + url);
+        };
+        ListView list = find(showScreen().getWindow().getDecorView(), ListView.class);
+
+        tap(list, 0);
+        idle();
+
+        assertEquals("Couldn't download Galaxy V2's background image: HTTP 500 for "
+                + Marketplace.GALAXY_V2.backgroundUrl, latestAlertMessage());
+        assertFalse(ThemeBackground.hasImage(context));
     }
 }

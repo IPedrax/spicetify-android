@@ -71,6 +71,7 @@ public class MarketplaceTest {
         assertEquals("https://raw.githubusercontent.com/harbassan/spicetify-galaxy/main/color.ini", theme.schemesUrl);
         assertEquals("https://raw.githubusercontent.com/harbassan/spicetify-galaxy/main/preview_playlist.png", theme.previewUrl);
         assertEquals(612, theme.stars);
+        assertNull(theme.backgroundUrl); // only the pinned Galaxy V2 has one
 
         List<Marketplace.Theme> many = Marketplace.parseManifest("["
                 + "{\"name\":\"A\",\"description\":\"a\",\"usercss\":\"a.css\",\"schemes\":\"https://example.com/a.ini\",\"branch\":\"dev\",\"preview\":null},"
@@ -113,9 +114,9 @@ public class MarketplaceTest {
 
     @Test
     public void sortsByStarOrderThenManifestOrder() {
-        Marketplace.Theme first = new Marketplace.Theme("a", "d", "o", null, "s", "r", 9, 0);
-        Marketplace.Theme second = new Marketplace.Theme("b", "d", "o", null, "s", "r", 9, 1);
-        Marketplace.Theme third = new Marketplace.Theme("c", "d", "o", null, "s", "r", 5, 1000);
+        Marketplace.Theme first = new Marketplace.Theme("a", "d", "o", null, "s", "r", 9, 0, null);
+        Marketplace.Theme second = new Marketplace.Theme("b", "d", "o", null, "s", "r", 9, 1, null);
+        Marketplace.Theme third = new Marketplace.Theme("c", "d", "o", null, "s", "r", 5, 1000, null);
         assertEquals(Arrays.asList(first, second, third), Marketplace.sorted(Arrays.asList(third, first, second)));
     }
 
