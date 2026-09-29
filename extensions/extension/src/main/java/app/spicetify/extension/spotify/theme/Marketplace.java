@@ -153,11 +153,18 @@ final class Marketplace {
         final int stars;
         /** Position in GitHub's star order, then in the manifest. */
         final int order;
-        /** An image to draw behind Spotify with the theme; null for every GitHub result. */
+        /**
+         * An image to draw behind Spotify with the theme; null for every GitHub result, whose own
+         * image, if it has one, is found in its include JS or user.css.
+         */
         final String backgroundUrl;
+        /** Null when the theme came from a cache written before it was kept. */
+        final String usercssUrl;
+        /** The JavaScript files the theme includes, in manifest order. */
+        final List<String> includeUrls;
 
         Theme(String title, String description, String author, String previewUrl, String schemesUrl,
-                String repoUrl, int stars, int order, String backgroundUrl) {
+                String repoUrl, int stars, int order, String backgroundUrl, String usercssUrl, List<String> includeUrls) {
             this.title = title;
             this.description = description;
             this.author = author;
@@ -167,6 +174,8 @@ final class Marketplace {
             this.stars = stars;
             this.order = order;
             this.backgroundUrl = backgroundUrl;
+            this.usercssUrl = usercssUrl;
+            this.includeUrls = includeUrls;
         }
     }
 
@@ -176,7 +185,8 @@ final class Marketplace {
             "https://raw.githubusercontent.com/harbassan/spicetify-galaxy/main/preview_playlist.png",
             "https://raw.githubusercontent.com/harbassan/spicetify-galaxy/main/color.ini",
             "https://github.com/harbassan/spicetify-galaxy", -1, -1,
-            "https://raw.githubusercontent.com/harbassan/spicetify-galaxy/main/assets/default_bg.jpg");
+            "https://raw.githubusercontent.com/harbassan/spicetify-galaxy/main/assets/default_bg.jpg",
+            null, Collections.emptyList());
 
     static final class Page {
         final List<Repo> repos;
@@ -283,15 +293,18 @@ final class Marketplace {
             if (item == null) continue;
             String title = string(item, "name");
             String description = string(item, "description");
+            String usercss = string(item, "usercss");
             String schemes = string(item, "schemes");
-            if (title.isEmpty() || description.isEmpty() || string(item, "usercss").isEmpty() || schemes.isEmpty()) continue;
+            if (title.isEmpty() || description.isEmpty() || usercss.isEmpty() || schemes.isEmpty()) continue;
             String branch = string(item, "branch");
             if (branch.isEmpty()) branch = repo.branch;
             String preview = string(item, "preview");
+            List<String> includes = new ArrayList<>();
+            for (String include : strings(item.opt("include"))) includes.add(resolve(include, repo, branch));
             themes.add(new Theme(cap(title, MAX_NAME_CHARS), cap(description, MAX_DESCRIPTION_CHARS),
                     cap(author(item, repo), MAX_NAME_CHARS),
                     preview.isEmpty() ? null : resolve(preview, repo, branch), resolve(schemes, repo, branch),
-                    repo.url, repo.stars, repoIndex * 1000 + i, null));
+                    repo.url, repo.stars, repoIndex * 1000 + i, null, resolve(usercss, repo, branch), includes));
         }
         return themes;
     }
@@ -300,6 +313,18 @@ final class Marketplace {
     private static String string(JSONObject object, String key) {
         Object value = object.opt(key);
         return value instanceof String ? ((String) value).trim() : "";
+    }
+
+    /** A string, or the strings in an array, trimmed; empty ones and anything else are left out. */
+    private static List<String> strings(Object value) {
+        JSONArray array = value instanceof JSONArray ? (JSONArray) value : new JSONArray().put(value);
+        List<String> strings = new ArrayList<>();
+        for (int i = 0; i < array.length(); i++) {
+            Object entry = array.opt(i);
+            String string = entry instanceof String ? ((String) entry).trim() : "";
+            if (!string.isEmpty()) strings.add(string);
+        }
+        return strings;
     }
 
     /** Cuts to at most {@code maxChars}, one fewer when the cut would split a surrogate pair. */
@@ -339,11 +364,13 @@ final class Marketplace {
             array.put(new JSONObject().put("title", theme.title).put("description", theme.description)
                     .put("author", theme.author).put("preview", theme.previewUrl == null ? JSONObject.NULL : theme.previewUrl)
                     .put("schemes", theme.schemesUrl).put("repo", theme.repoUrl)
-                    .put("stars", theme.stars).put("order", theme.order));
+                    .put("stars", theme.stars).put("order", theme.order)
+                    .put("usercss", theme.usercssUrl).put("include", new JSONArray(theme.includeUrls)));
         }
         return new JSONObject().put("savedAt", savedAt).put("themes", array).toString();
     }
 
+    /** A cache written before usercss and include were kept still loads, with nothing to find an image in. */
     static Cached fromJson(String json) throws JSONException {
         JSONObject root = new JSONObject(json);
         JSONArray array = root.getJSONArray("themes");
@@ -351,9 +378,11 @@ final class Marketplace {
         for (int i = 0; i < array.length(); i++) {
             JSONObject item = array.getJSONObject(i);
             String preview = string(item, "preview");
+            String usercss = string(item, "usercss");
             themes.add(new Theme(item.getString("title"), item.getString("description"), item.getString("author"),
                     preview.isEmpty() ? null : preview, item.getString("schemes"), item.getString("repo"),
-                    item.getInt("stars"), item.getInt("order"), null));
+                    item.getInt("stars"), item.getInt("order"), null,
+                    usercss.isEmpty() ? null : usercss, strings(item.opt("include"))));
         }
         return new Cached(themes, root.getLong("savedAt"));
     }

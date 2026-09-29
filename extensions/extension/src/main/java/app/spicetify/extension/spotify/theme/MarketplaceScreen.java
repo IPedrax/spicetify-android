@@ -8,6 +8,7 @@ import android.graphics.Typeface;
 import android.text.Editable;
 import android.text.TextUtils;
 import android.text.TextWatcher;
+import android.util.Base64;
 import android.util.Log;
 import android.util.TypedValue;
 import android.view.Gravity;
@@ -290,7 +291,7 @@ final class MarketplaceScreen {
     /**
      * Downloads and reads a theme's color.ini on the download thread, then its background image if
      * it has one, and returns what to show for it on the main thread: the scheme chooser, or why
-     * there's none. Never throws.
+     * there's none. Never throws. A theme's own image that fails to load is left out, with a Toast.
      */
     private Runnable download(Marketplace.Theme theme) {
         try {
@@ -307,10 +308,24 @@ final class MarketplaceScreen {
                 String message = "Couldn't download " + theme.title + "'s background image: " + ThemeSection.describe(e);
                 return () -> ThemeSection.error(context, message);
             }
-            return () -> ThemeSection.chooseScheme(context, usable, "button", theme.title, image, () -> {
-                dialog.dismiss();
-                onApplied.run();
-            });
+            String problem = null;
+            if (theme.backgroundUrl == null) {
+                try {
+                    image = ownImage(theme);
+                } catch (IOException | IllegalArgumentException e) {
+                    Log.w("Spicetify", "Marketplace background image failed for " + theme.title, e);
+                    problem = "Couldn't load " + theme.title + "'s background image: " + ThemeSection.describe(e);
+                }
+            }
+            byte[] background = image;
+            String warning = problem;
+            return () -> {
+                if (warning != null) Toast.makeText(context, warning, Toast.LENGTH_LONG).show();
+                ThemeSection.chooseScheme(context, usable, "button", theme.title, background, () -> {
+                    dialog.dismiss();
+                    onApplied.run();
+                });
+            };
         } catch (FileNotFoundException e) {
             return () -> ThemeSection.error(context, theme.title + " has no color schemes to use on Android.");
         } catch (ThemeException e) {
@@ -320,6 +335,36 @@ final class MarketplaceScreen {
             Log.w("Spicetify", "Marketplace theme download failed: " + theme.schemesUrl, e);
             String reason = ThemeSection.describe(e);
             return () -> ThemeSection.error(context, "Couldn't download " + theme.title + ": " + reason);
+        }
+    }
+
+    /**
+     * The image a theme shows on desktop: the first its include JS files name, in manifest order,
+     * then its user.css; null when none does. A file that fails to download names none, but an
+     * image that fails to download or decode throws.
+     */
+    private byte[] ownImage(Marketplace.Theme theme) throws IOException {
+        String url = null;
+        for (int i = 0; url == null && i < theme.includeUrls.size(); i++) {
+            String js = text(theme.includeUrls.get(i));
+            if (js != null) url = ThemeImages.fromJs(js);
+        }
+        if (url == null && theme.usercssUrl != null) {
+            String css = text(theme.usercssUrl);
+            if (css != null) url = ThemeImages.fromCss(css, theme.usercssUrl);
+        }
+        if (url == null) return null;
+        if (!url.startsWith("data:")) return imageFetcher.get(url);
+        return Base64.decode(url.substring(url.indexOf(',') + 1), Base64.DEFAULT);
+    }
+
+    /** A script or stylesheet to look for an image in, or null when it fails to download. */
+    private String text(String url) {
+        try {
+            return fetcher.get(url);
+        } catch (IOException e) {
+            Log.w("Spicetify", "Couldn't read " + url + " to look for a background image", e);
+            return null;
         }
     }
 
