@@ -77,15 +77,21 @@ final class ThemeBackground {
         return new File(context.getFilesDir(), FILE).exists();
     }
 
+    /** Decodes just the image's size, refusing bytes Android can't read as an image. */
+    static BitmapFactory.Options bounds(byte[] image) throws IOException {
+        BitmapFactory.Options bounds = new BitmapFactory.Options();
+        bounds.inJustDecodeBounds = true;
+        BitmapFactory.decodeByteArray(image, 0, image.length, bounds);
+        if (bounds.outWidth <= 0 || bounds.outHeight <= 0) throw new IOException("Not an image Android can read");
+        return bounds;
+    }
+
     /**
      * Saves the image to draw behind Spotify, refusing bytes Android can't read as one. Writes to a
      * temporary file and renames it, so a failure never leaves half an image.
      */
     static void save(Context context, byte[] image) throws IOException {
-        BitmapFactory.Options bounds = new BitmapFactory.Options();
-        bounds.inJustDecodeBounds = true;
-        BitmapFactory.decodeByteArray(image, 0, image.length, bounds);
-        if (bounds.outWidth <= 0 || bounds.outHeight <= 0) throw new IOException("Not an image Android can read");
+        bounds(image);
         File file = new File(context.getFilesDir(), FILE);
         File tmp = new File(file.getPath() + ".tmp");
         try (FileOutputStream output = new FileOutputStream(tmp)) {

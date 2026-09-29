@@ -67,7 +67,11 @@ public class ThemeBackgroundTest {
     }
 
     static byte[] png() {
-        Bitmap bitmap = Bitmap.createBitmap(8, 4, Bitmap.Config.ARGB_8888);
+        return png(8, 4);
+    }
+
+    static byte[] png(int width, int height) {
+        Bitmap bitmap = Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888);
         ByteArrayOutputStream out = new ByteArrayOutputStream();
         bitmap.compress(Bitmap.CompressFormat.PNG, 100, out);
         return out.toByteArray();
