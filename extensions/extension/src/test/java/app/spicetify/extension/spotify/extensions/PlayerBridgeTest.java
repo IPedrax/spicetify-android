@@ -1,0 +1,575 @@
+package app.spicetify.extension.spotify.extensions;
+
+import static java.nio.charset.StandardCharsets.UTF_8;
+import static org.junit.Assert.assertArrayEquals;
+import static org.junit.Assert.assertEquals;
+import static org.junit.Assert.assertFalse;
+import static org.junit.Assert.assertNotNull;
+import static org.junit.Assert.assertNull;
+import static org.junit.Assert.assertSame;
+import static org.junit.Assert.assertTrue;
+
+import android.content.Context;
+import com.spotify.cosmos.cosmos.Lifetime;
+import com.spotify.cosmos.cosmos.Request;
+import com.spotify.cosmos.cosmos.ResolveCallback;
+import com.spotify.cosmos.cosmos.Response;
+import java.io.File;
+import java.nio.file.Files;
+import java.util.ArrayList;
+import java.util.HashSet;
+import java.util.List;
+import java.util.Set;
+import java.util.concurrent.BlockingQueue;
+import java.util.concurrent.CopyOnWriteArrayList;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.LinkedBlockingQueue;
+import java.util.concurrent.TimeUnit;
+import org.junit.After;
+import org.junit.Before;
+import org.junit.Test;
+import org.junit.runner.RunWith;
+import org.robolectric.RobolectricTestRunner;
+import org.robolectric.RuntimeEnvironment;
+import org.robolectric.annotation.Config;
+
+@RunWith(RobolectricTestRunner.class)
+@Config(sdk = 35, manifest = Config.NONE)
+public class PlayerBridgeTest {
+    private static final String SKIP_NEXT = "sp://esperanto/spotify.player.esperanto.proto.ContextPlayer/SkipNext";
+    private static final String GET_STATE = "sp://esperanto/spotify.player.esperanto.proto.ContextPlayer/GetState";
+
+    private final Context context = RuntimeEnvironment.getApplication();
+    private final FakeRouter router = new FakeRouter();
+    private final List<PlayerBridge.StateListener> listeners = new ArrayList<>();
+
+    @Before
+    public void attachAFakeRouter() {
+        // The bridge is process-wide, so each test points it at its own application and router.
+        Extensions.setAppContext(context);
+        PlayerBridge.attach(router);
+    }
+
+    @After
+    public void removeListeners() {
+        for (PlayerBridge.StateListener listener : listeners) PlayerBridge.removeStateListener(listener);
+    }
+
+    // ---- Calls ----
+
+    @Test
+    public void callPostsToEsperantoAndDeliversTheBodyOnTheBridgeThread() throws Exception {
+        Answer answer = new Answer();
+        PlayerBridge.call(Esperanto.CONTEXT_PLAYER, "SkipNext", new byte[] {1, 2}, answer);
+
+        FakeRequest request = router.only();
+        assertEquals("POST", request.action);
+        assertEquals(SKIP_NEXT, request.uri);
+        assertArrayEquals(new byte[] {1, 2}, request.body);
+
+        request.callback.onResponse(200, new byte[] {7});
+
+        answer.await();
+        assertArrayEquals(new byte[] {7}, answer.body);
+        assertEquals("Spicetify player bridge", answer.thread);
+        assertTrue("an answered call releases its request", request.cancelled);
+    }
+
+    @Test
+    public void aStatusOtherThan200Fails() throws Exception {
+        Answer answer = new Answer();
+        PlayerBridge.call(Esperanto.CONTEXT_PLAYER, "SkipNext", new byte[0], answer);
+
+        router.only().callback.onResponse(500, new byte[0]);
+
+        answer.await();
+        assertEquals("status 500", answer.reason);
+        assertNull(answer.body);
+    }
+
+    @Test
+    public void aRouterErrorFails() throws Exception {
+        Answer answer = new Answer();
+        PlayerBridge.call(Esperanto.CONTEXT_PLAYER, "SkipNext", new byte[0], answer);
+        FakeRequest request = router.only();
+
+        request.callback.onError(new IllegalStateException("router gone"));
+
+        answer.await();
+        assertTrue(answer.reason, answer.reason.contains("router gone"));
+        assertTrue("an error releases the request", request.cancelled);
+    }
+
+    @Test
+    public void getSendsAPlainCosmosGet() throws Exception {
+        Answer answer = new Answer();
+        PlayerBridge.get("sp://auth/v2/token?renew=0", answer);
+
+        FakeRequest request = router.only();
+        assertEquals("GET", request.action);
+        assertEquals("sp://auth/v2/token?renew=0", request.uri);
+        assertArrayEquals(new byte[0], request.body);
+        request.callback.onResponse(200, "{}".getBytes(UTF_8));
+
+        answer.await();
+        assertEquals("{}", new String(answer.body, UTF_8));
+    }
+
+    @Test
+    public void aCallbackCopiesTheBodyAndLeavesTheWorkToTheBridgeThread() throws Exception {
+        CountDownLatch busy = new CountDownLatch(1);
+        PlayerBridge.call(Esperanto.CONTEXT_PLAYER, "SkipNext", new byte[0], new PlayerBridge.Result() {
+            @Override
+            public void done(byte[] body) {
+                awaitQuietly(busy);
+            }
+
+            @Override
+            public void failed(String reason) {}
+        });
+        Answer answer = new Answer();
+        PlayerBridge.call(Esperanto.CONTEXT_PLAYER, "SkipNext", new byte[0], answer);
+
+        router.requests.get(0).callback.onResponse(200, new byte[0]); // holds the bridge thread
+        byte[] body = {5};
+        router.requests.get(1).callback.onResponse(200, body); // returns while the bridge thread is held
+        body[0] = 6; // Spotify owns this array once its callback returns
+        busy.countDown();
+
+        answer.await();
+        assertArrayEquals(new byte[] {5}, answer.body);
+    }
+
+    @Test
+    public void onlyTheFirstAnswerCountsEvenWhenItArrivesBeforeResolveReturns() throws Exception {
+        router.answerWhileResolving = new byte[] {42};
+        Answer answer = new Answer();
+
+        PlayerBridge.call(Esperanto.CONTEXT_PLAYER, "SkipNext", new byte[0], answer);
+
+        FakeRequest request = router.only();
+        assertTrue("released as soon as resolve handed it back", request.cancelled);
+        request.callback.onResponse(500, new byte[0]);
+        flush(router);
+        assertEquals(1, answer.count);
+        assertArrayEquals(new byte[] {42}, answer.body);
+    }
+
+    @Test
+    public void aDestroyedRouterFailsCallsWithBridgeNotConnected() throws Exception {
+        router.destroyed = true;
+        Answer answer = new Answer();
+
+        PlayerBridge.call(Esperanto.CONTEXT_PLAYER, "SkipNext", new byte[0], answer);
+
+        answer.await();
+        assertEquals("bridge not connected", answer.reason);
+        assertTrue(router.requests.isEmpty());
+        assertFalse(PlayerBridge.connected());
+    }
+
+    @Test
+    public void aRouterDestroyedAfterTheBridgesCheckFailsTheCallWithoutCallingIn() throws Exception {
+        FakeService service = new FakeService();
+        PlayerBridge.attach(CosmosRouter.reflective(service));
+        service.router.destroyAfterFirstCheck = true;
+        Answer answer = new Answer();
+
+        PlayerBridge.call(Esperanto.CONTEXT_PLAYER, "SkipNext", new byte[0], answer);
+
+        answer.await();
+        assertEquals("bridge not connected", answer.reason);
+        assertNull("never sent to the destroyed router", service.router.request);
+    }
+
+    @Test
+    public void attachingANewRouterFailsTheOldRoutersPendingCalls() throws Exception {
+        Answer answer = new Answer();
+        PlayerBridge.call(Esperanto.CONTEXT_PLAYER, "SkipNext", new byte[0], answer);
+        FakeRequest pending = router.only();
+        FakeRouter replacement = new FakeRouter();
+
+        PlayerBridge.attach(replacement);
+
+        answer.await();
+        assertEquals("bridge not connected", answer.reason);
+        assertTrue("its request is released", pending.cancelled);
+        pending.callback.onResponse(200, new byte[] {1}); // a late answer from the old router
+        flush(replacement);
+        assertEquals(1, answer.count);
+        assertNull(answer.body);
+    }
+
+    // ---- The player state stream ----
+
+    @Test
+    public void theFirstListenerOpensOneStreamAndRemovingTheLastCancelsIt() {
+        States first = listen(new States());
+
+        FakeRequest stream = router.only();
+        assertEquals("SUB", stream.action);
+        assertEquals(GET_STATE, stream.uri);
+        assertArrayEquals(Esperanto.getState(), stream.body);
+
+        States second = listen(new States());
+        assertEquals("a second listener opens none", 1, router.requests.size());
+
+        PlayerBridge.removeStateListener(first);
+        assertFalse(stream.cancelled);
+        PlayerBridge.removeStateListener(second);
+        assertTrue(stream.cancelled);
+    }
+
+    @Test
+    public void aStateReachesListenersParsed() throws Exception {
+        States states = listen(new States());
+
+        router.only().callback.onResponse(200, EsperantoTest.contextPlayerState("spotify:track:x"));
+
+        Esperanto.PlayerState state = states.next();
+        assertEquals("spotify:playlist:p", state.contextUri);
+        assertEquals("spotify:track:x", state.trackUri);
+        assertEquals("uid-1", state.trackUid);
+        assertEquals(2, state.artistUris.size());
+        assertEquals("Spicetify player bridge", states.thread);
+        assertSame(state, PlayerBridge.lastState());
+    }
+
+    @Test
+    public void removingTheLastListenerForgetsTheLastState() throws Exception {
+        States states = listen(new States());
+        router.only().callback.onResponse(200, EsperantoTest.contextPlayerState("spotify:track:x"));
+        states.next();
+
+        PlayerBridge.removeStateListener(states);
+
+        assertNull("no stream, so the track may have changed", PlayerBridge.lastState());
+    }
+
+    @Test
+    public void aStreamErrorForgetsTheStateShowsWhyAndTheNextListenerReopens() throws Exception {
+        States states = listen(new States());
+        FakeRequest stream = router.only();
+        stream.callback.onResponse(200, EsperantoTest.contextPlayerState("spotify:track:x"));
+        states.next();
+
+        stream.callback.onError(new IllegalStateException("stream gone"));
+        flush(router);
+
+        assertTrue("an ended stream is released", stream.cancelled);
+        assertNull(PlayerBridge.lastState());
+        assertEquals("Player bridge: stream error, retrying on next use"
+                + " (The player state stream ended: java.lang.IllegalStateException: stream gone)",
+                Extensions.statusLines().get(0));
+
+        listen(new States());
+        FakeRequest reopened = router.requests.get(router.requests.size() - 1);
+        assertEquals("SUB", reopened.action);
+        assertEquals(GET_STATE, reopened.uri);
+        reopened.callback.onResponse(200, EsperantoTest.contextPlayerState("spotify:track:y"));
+        assertEquals("spotify:track:y", states.next().trackUri);
+        assertEquals("a good state clears the problem",
+                "Player bridge: connected, spotify:track:y", Extensions.statusLines().get(0));
+    }
+
+    @Test
+    public void aThrowingListenerDoesNotStopTheOthers() throws Exception {
+        listen(state -> {
+            throw new IllegalStateException("listener failed");
+        });
+        States states = listen(new States());
+
+        router.only().callback.onResponse(200, EsperantoTest.contextPlayerState("spotify:track:x"));
+
+        assertEquals("spotify:track:x", states.next().trackUri);
+    }
+
+    @Test
+    public void attachingANewRouterMovesTheStreamToIt() throws Exception {
+        States states = listen(new States());
+        FakeRequest old = router.only();
+
+        FakeRouter replacement = new FakeRouter();
+        PlayerBridge.attach(replacement);
+
+        assertTrue(old.cancelled);
+        FakeRequest reopened = replacement.only();
+        assertEquals("SUB", reopened.action);
+        assertEquals(GET_STATE, reopened.uri);
+
+        // A state the old router still had queued is dropped; the bridge thread runs tasks in order.
+        old.callback.onResponse(200, EsperantoTest.contextPlayerState("spotify:track:old"));
+        reopened.callback.onResponse(200, EsperantoTest.contextPlayerState("spotify:track:new"));
+        assertEquals("spotify:track:new", states.next().trackUri);
+    }
+
+    @Test
+    public void aStateThatCantBeReadIsReportedOnceAndTheStreamStaysOpen() throws Exception {
+        File log = new File(context.getFilesDir(), "spicetify_extensions.log");
+        log.delete();
+        States states = listen(new States());
+        FakeRequest stream = router.only();
+
+        byte[] truncated = {0x12, 0x05, 'a'}; // field 2 declares 5 bytes and carries 1
+        stream.callback.onResponse(200, truncated);
+        stream.callback.onResponse(500, new byte[0]);
+        stream.callback.onResponse(200, truncated);
+        stream.callback.onResponse(200, EsperantoTest.contextPlayerState("spotify:track:x"));
+
+        assertEquals("spotify:track:x", states.next().trackUri);
+        assertFalse(stream.cancelled);
+        String written = ExtensionsTest.awaitLog(context, log);
+        assertEquals(written, 1, written.split(" player_bridge: Couldn't read the player state", -1).length - 1);
+        assertEquals("Player bridge: connected, spotify:track:x", Extensions.statusLines().get(0));
+    }
+
+    @Test
+    public void statusLinesStartWithTheBridgeLine() throws Exception {
+        assertEquals("Player bridge: connected", Extensions.statusLines().get(0));
+
+        States states = listen(new States());
+        router.only().callback.onResponse(200, EsperantoTest.contextPlayerState("spotify:track:x"));
+        states.next();
+        assertEquals("Player bridge: connected, spotify:track:x", Extensions.statusLines().get(0));
+
+        router.destroyed = true;
+        assertEquals("Player bridge: waiting for Spotify", Extensions.statusLines().get(0));
+    }
+
+    // ---- Spotify's router, through reflection ----
+
+    @Test
+    public void reflectiveBuildsSpotifysRequestAndMapsItsCallback() throws Exception {
+        FakeService service = new FakeService();
+        CosmosRouter reflective = CosmosRouter.reflective(service);
+        Recorded recorded = new Recorded();
+
+        CosmosRouter.Cancel cancel = reflective.resolve("SUB", GET_STATE, new byte[] {3}, recorded);
+
+        Request request = service.router.request;
+        assertEquals("SUB", request.getAction());
+        assertEquals(GET_STATE, request.getUri());
+        assertArrayEquals(new byte[] {3}, request.getBody());
+
+        ResolveCallback callback = service.router.callback;
+        callback.onResolved(new Response(200, new byte[] {9}));
+        assertEquals(200, recorded.status);
+        assertArrayEquals(new byte[] {9}, recorded.body);
+        IllegalStateException error = new IllegalStateException("gone");
+        callback.onError(error);
+        assertSame(error, recorded.error);
+
+        // Spotify may keep callbacks in hashed collections, so the proxy answers Object's methods.
+        assertTrue(callback.equals(callback));
+        assertFalse(callback.equals(new Object()));
+        Set<ResolveCallback> callbacks = new HashSet<>();
+        callbacks.add(callback);
+        assertTrue(callbacks.contains(callback));
+        assertNotNull(callback.toString());
+
+        assertEquals(0, service.router.released);
+        cancel.cancel();
+        assertEquals(1, service.router.released);
+
+        assertFalse(reflective.destroyed());
+        service.router.destroyed = true;
+        assertTrue(reflective.destroyed());
+    }
+
+    @Test
+    public void onCosmosAttachesSpotifysRouterAndStartsTheExtensionsThatAreOn() throws Exception {
+        CountDownLatch started = new CountDownLatch(1);
+        Extensions.onSwitch("test_started", (switchContext, on) -> {
+            if (on && switchContext == context) started.countDown();
+        });
+        context.getSharedPreferences("spicetify_extensions", Context.MODE_PRIVATE).edit()
+                .putBoolean("test_started", true).commit();
+        Extensions.setAppContext(null);
+        FakeService service = new FakeService();
+
+        PlayerBridge.onCosmos(service);
+
+        assertSame("found through the router's class loader", context, Extensions.appContext());
+        assertTrue(PlayerBridge.connected());
+        assertTrue("an extension that is on starts with Spotify", started.await(5, TimeUnit.SECONDS));
+        PlayerBridge.call(Esperanto.CONTEXT_PLAYER, "SkipNext", new byte[0], new Answer());
+        assertEquals(SKIP_NEXT, service.router.request.getUri());
+    }
+
+    @Test
+    public void onCosmosWithoutSpotifysRouterKeepsTheBridgeAndLogsWhy() throws Exception {
+        File log = new File(context.getFilesDir(), "spicetify_extensions.log");
+        log.delete();
+
+        PlayerBridge.onCosmos(new Object());
+
+        assertTrue(PlayerBridge.connected());
+        String written = ExtensionsTest.awaitLog(context, log);
+        assertTrue(written, written.contains(" player_bridge: Couldn't connect: java.lang.NoSuchMethodException"));
+        router.destroyed = true;
+        String line = Extensions.statusLines().get(0);
+        assertTrue(line, line.startsWith(
+                "Player bridge: waiting for Spotify (Couldn't connect: java.lang.NoSuchMethodException"));
+    }
+
+    // ---- Helpers ----
+
+    private <T extends PlayerBridge.StateListener> T listen(T listener) {
+        listeners.add(listener);
+        PlayerBridge.addStateListener(listener);
+        return listener;
+    }
+
+    /** Waits for the bridge thread to run everything posted so far; it runs tasks in order. */
+    private static void flush(FakeRouter attached) throws InterruptedException {
+        Answer marker = new Answer();
+        PlayerBridge.call("flush", "flush", new byte[0], marker);
+        attached.requests.get(attached.requests.size() - 1).callback.onResponse(200, new byte[0]);
+        marker.await();
+    }
+
+    private static void awaitQuietly(CountDownLatch latch) {
+        try {
+            latch.await(5, TimeUnit.SECONDS);
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+        }
+    }
+
+    private static final class FakeRouter implements CosmosRouter {
+        final List<FakeRequest> requests = new CopyOnWriteArrayList<>();
+        volatile boolean destroyed;
+        volatile byte[] answerWhileResolving;
+
+        @Override
+        public Cancel resolve(String action, String uri, byte[] body, Callback callback) {
+            FakeRequest request = new FakeRequest(action, uri, body, callback);
+            requests.add(request);
+            byte[] answer = answerWhileResolving;
+            if (answer != null) callback.onResponse(200, answer);
+            return () -> request.cancelled = true;
+        }
+
+        @Override
+        public boolean destroyed() {
+            return destroyed;
+        }
+
+        FakeRequest only() {
+            assertEquals(1, requests.size());
+            return requests.get(0);
+        }
+    }
+
+    private static final class FakeRequest {
+        final String action;
+        final String uri;
+        final byte[] body;
+        final CosmosRouter.Callback callback;
+        volatile boolean cancelled;
+
+        FakeRequest(String action, String uri, byte[] body, CosmosRouter.Callback callback) {
+            this.action = action;
+            this.uri = uri;
+            this.body = body;
+            this.callback = callback;
+        }
+    }
+
+    private static final class Answer implements PlayerBridge.Result {
+        private final CountDownLatch answered = new CountDownLatch(1);
+        volatile byte[] body;
+        volatile String reason;
+        volatile String thread;
+        volatile int count; // written only by the bridge thread
+
+        @Override
+        public void done(byte[] body) {
+            this.body = body;
+            answered();
+        }
+
+        @Override
+        public void failed(String reason) {
+            this.reason = reason;
+            answered();
+        }
+
+        private void answered() {
+            thread = Thread.currentThread().getName();
+            count++;
+            answered.countDown();
+        }
+
+        void await() throws InterruptedException {
+            assertTrue("no answer within 5 s", answered.await(5, TimeUnit.SECONDS));
+        }
+    }
+
+    private static final class States implements PlayerBridge.StateListener {
+        private final BlockingQueue<Esperanto.PlayerState> received = new LinkedBlockingQueue<>();
+        volatile String thread;
+
+        @Override
+        public void onState(Esperanto.PlayerState state) {
+            thread = Thread.currentThread().getName();
+            received.add(state);
+        }
+
+        Esperanto.PlayerState next() throws InterruptedException {
+            Esperanto.PlayerState state = received.poll(5, TimeUnit.SECONDS);
+            assertNotNull("no state within 5 s", state);
+            return state;
+        }
+    }
+
+    private static final class Recorded implements CosmosRouter.Callback {
+        int status;
+        byte[] body;
+        Throwable error;
+
+        @Override
+        public void onResponse(int status, byte[] body) {
+            this.status = status;
+            this.body = body;
+        }
+
+        @Override
+        public void onError(Throwable error) {
+            this.error = error;
+        }
+    }
+
+    /** Stands in for {@code SharedCosmosRouterService}; reflective() only calls getRemoteNativeRouter(). */
+    public static final class FakeService {
+        final FakeNativeRouter router = new FakeNativeRouter();
+
+        public FakeNativeRouter getRemoteNativeRouter() {
+            return router;
+        }
+    }
+
+    /** Stands in for {@code RemoteNativeRouter}. */
+    public static final class FakeNativeRouter {
+        volatile Request request;
+        volatile ResolveCallback callback;
+        volatile int released;
+        volatile boolean destroyed;
+        /** Destroys the router right after its first check, as a logout between check and call would. */
+        volatile boolean destroyAfterFirstCheck;
+
+        public Lifetime performNativeResolve(Request request, ResolveCallback callback) {
+            // Spotify's own resolve holds this monitor, and destroy() takes it.
+            assertTrue("sent under the router's monitor", Thread.holdsLock(this));
+            this.request = request;
+            this.callback = callback;
+            return () -> released++;
+        }
+
+        public boolean getRouterDestroyed() {
+            boolean was = destroyed;
+            if (destroyAfterFirstCheck) destroyed = true;
+            return was;
+        }
+    }
+}

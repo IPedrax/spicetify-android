@@ -10,14 +10,21 @@ public final class PatchSettings {
     private static final String FILE = "spicetify_patch_settings";
     private static final String CLEAN_SHARING = "clean_sharing";
     private static volatile SharedPreferences preferences;
+    private static volatile Context applicationContext;
 
     private PatchSettings() {}
 
     public static void initialize(Context context) {
-        preferences = context.getApplicationContext().getSharedPreferences(FILE, Context.MODE_PRIVATE);
+        applicationContext = context.getApplicationContext();
+        preferences = applicationContext.getSharedPreferences(FILE, Context.MODE_PRIVATE);
         if (InstalledPatches.themeColors()) ThemeRuntime.install(context);
         if (InstalledPatches.homePins()) HomePins.initialize(context);
         if (InstalledPatches.serverFiles()) ServerConfig.initialize(context);
+    }
+
+    /** The application context Spotify's onCreate passed to {@link #initialize}, or null before then. */
+    public static Context applicationContext() {
+        return applicationContext;
     }
 
     public static boolean cleanSharingEnabled() {

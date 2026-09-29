@@ -19,6 +19,7 @@ import android.widget.ScrollView;
 import android.widget.Switch;
 import android.widget.TextView;
 import android.widget.Toast;
+import app.spicetify.extension.spotify.extensions.Extensions;
 import app.spicetify.extension.spotify.home.HomePins;
 import app.spicetify.extension.spotify.theme.ThemeRuntime;
 import app.spicetify.extension.spotify.theme.ThemeSection;
@@ -125,6 +126,12 @@ public final class SpicetifySettingsScreen {
             }));
         }
 
+        if (InstalledPatches.extensions()) {
+            content.addView(text(context, "Extensions", true));
+            for (String line : Extensions.statusLines()) content.addView(text(context, line, false));
+            content.addView(text(context, "Turn extensions on in the Spicetify Marketplace.", false));
+        }
+
         if (InstalledPatches.homePins()) {
             content.addView(text(context, "Home shortcuts", true));
             content.addView(text(context, "Choose which shortcuts appear first when Spotify includes them on Home. "
@@ -140,7 +147,7 @@ public final class SpicetifySettingsScreen {
         }
 
         if (!sharingInstalled && !themeInstalled && !InstalledPatches.homePins()
-                && !InstalledPatches.serverFiles()) {
+                && !InstalledPatches.serverFiles() && !InstalledPatches.extensions()) {
             content.addView(text(context, "No configurable Spicetify patches are installed.", false));
         }
         return content;

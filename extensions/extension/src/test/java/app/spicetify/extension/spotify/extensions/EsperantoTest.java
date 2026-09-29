@@ -17,8 +17,27 @@ public class EsperantoTest {
 
     @Test
     public void parseStateReadsCoreFieldsArtistsAndAdvertisement() throws IOException {
+        Esperanto.PlayerState parsed = Esperanto.parseState(contextPlayerState("spotify:track:x"));
+
+        assertEquals("spotify:playlist:p", parsed.contextUri);
+        assertEquals("spotify:track:x", parsed.trackUri);
+        assertEquals("uid-1", parsed.trackUid);
+        assertEquals(Arrays.asList("spotify:artist:a1", "spotify:artist:a2"), parsed.artistUris);
+        assertFalse(parsed.advertisement);
+        assertEquals("playback-1", parsed.playbackId);
+        assertTrue(parsed.paused);
+        assertEquals(7L, parsed.queueRevision);
+    }
+
+    /**
+     * A {@code ContextPlayerState} playing {@code trackUri} (uid {@code uid-1}) in
+     * {@code spotify:playlist:p}: artists {@code a1} and {@code a2} plus a blank third,
+     * {@code is_advertisement=false}, playback {@code playback-1}, paused, queue revision 7.
+     * Other tests send it as a state body.
+     */
+    static byte[] contextPlayerState(String trackUri) {
         Wire.Writer contextTrack = new Wire.Writer();
-        contextTrack.string(1, "spotify:track:x");
+        contextTrack.string(1, trackUri);
         contextTrack.string(2, "uid-1");
         contextTrack.message(3, metadataEntry("artist_uri", "spotify:artist:a1"));
         contextTrack.message(3, metadataEntry("artist_uri:1", "spotify:artist:a2"));
@@ -34,17 +53,7 @@ public class EsperantoTest {
         state.string(8, "playback-1");
         state.bool(14, true);
         state.varint(25, 7);
-
-        Esperanto.PlayerState parsed = Esperanto.parseState(state.toByteArray());
-
-        assertEquals("spotify:playlist:p", parsed.contextUri);
-        assertEquals("spotify:track:x", parsed.trackUri);
-        assertEquals("uid-1", parsed.trackUid);
-        assertEquals(Arrays.asList("spotify:artist:a1", "spotify:artist:a2"), parsed.artistUris);
-        assertFalse(parsed.advertisement);
-        assertEquals("playback-1", parsed.playbackId);
-        assertTrue(parsed.paused);
-        assertEquals(7L, parsed.queueRevision);
+        return state.toByteArray();
     }
 
     private static Wire.Writer metadataEntry(String key, String value) {
