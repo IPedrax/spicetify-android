@@ -15,11 +15,12 @@ import android.graphics.drawable.Drawable;
 import android.util.DisplayMetrics;
 import android.view.View;
 import java.io.File;
+import java.io.FileOutputStream;
+import java.io.IOException;
 
 /**
- * Spike: draws a user-supplied image behind Spotify's window instead of the stock background.
- * Not part of the theme patch; the image is expected to be dropped into app-private storage by
- * hand for a device test.
+ * Spike: draws a theme's image behind Spotify's window instead of the stock background. Applying a
+ * theme saves its image in app-private storage, or clears it for a theme without one.
  */
 final class ThemeBackground {
     private static final String FILE = "spicetify_background";
@@ -74,6 +75,30 @@ final class ThemeBackground {
     /** Whether an image is saved to draw behind Spotify. */
     static boolean hasImage(Context context) {
         return new File(context.getFilesDir(), FILE).exists();
+    }
+
+    /**
+     * Saves the image to draw behind Spotify, refusing bytes Android can't read as one. Writes to a
+     * temporary file and renames it, so a failure never leaves half an image.
+     */
+    static void save(Context context, byte[] image) throws IOException {
+        BitmapFactory.Options bounds = new BitmapFactory.Options();
+        bounds.inJustDecodeBounds = true;
+        BitmapFactory.decodeByteArray(image, 0, image.length, bounds);
+        if (bounds.outWidth <= 0 || bounds.outHeight <= 0) throw new IOException("Not an image Android can read");
+        File file = new File(context.getFilesDir(), FILE);
+        File tmp = new File(file.getPath() + ".tmp");
+        try (FileOutputStream output = new FileOutputStream(tmp)) {
+            output.write(image);
+        }
+        if (!tmp.renameTo(file)) throw new IOException("Could not replace " + file);
+        cached = null;
+    }
+
+    /** Deletes the image, so Spotify draws its own background again. */
+    static void clear(Context context) {
+        new File(context.getFilesDir(), FILE).delete();
+        cached = null;
     }
 
     static boolean blurEnabled(Context context) {

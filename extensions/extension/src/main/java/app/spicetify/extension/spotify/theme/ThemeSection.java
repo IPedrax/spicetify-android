@@ -15,8 +15,10 @@ import android.widget.LinearLayout;
 import android.widget.Switch;
 import android.widget.Toast;
 import app.spicetify.extension.spotify.settings.SpicetifySettingsScreen;
+import java.io.IOException;
 import java.util.List;
 import java.util.Locale;
+import java.util.Map;
 
 /** The Theme part of the Spicetify settings screen. */
 public final class ThemeSection {
@@ -46,7 +48,7 @@ public final class ThemeSection {
                 context, "Current theme: " + ThemeState.load(context).label, false));
         for (String[] preset : PRESETS) {
             addButton(section, preset[1], () ->
-                    apply(context, ThemeState.Selection.preset(preset[0], preset[1]), onApplied));
+                    apply(context, ThemeState.Selection.preset(preset[0], preset[1]), null, onApplied));
         }
         addButton(section, "Spicetify Marketplace", () -> MarketplaceScreen.open(context, onApplied));
         addButton(section, "Paste a Spicetify theme", () -> paste(context, onApplied));
@@ -68,8 +70,22 @@ public final class ThemeSection {
         return section;
     }
 
-    /** Applies a selection, then reports the outcome. */
-    static void apply(Context context, ThemeState.Selection selection, Runnable onApplied) {
+    /**
+     * Saves the theme's background image, or clears it when {@code background} is null, then applies
+     * a selection and reports the outcome. The image goes first because select passes
+     * {@link ThemeBackground#hasImage} to Compose.
+     */
+    static void apply(Context context, ThemeState.Selection selection, byte[] background, Runnable onApplied) {
+        try {
+            if (background == null) {
+                ThemeBackground.clear(context);
+            } else {
+                ThemeBackground.save(context, background);
+            }
+        } catch (IOException e) {
+            error(context, "Couldn't save the background image: " + describe(e));
+            return;
+        }
         if (ThemeRuntime.select(context, selection)) {
             Toast.makeText(context, "Theme applied: " + selection.label, Toast.LENGTH_SHORT).show();
             onApplied.run();
@@ -110,7 +126,7 @@ public final class ThemeSection {
                 .setPositiveButton("Apply", (dialog, which) -> {
                     try {
                         List<SpicetifyTheme.Scheme> schemes = SpicetifyTheme.parse(text.getText().toString());
-                        chooseScheme(context, schemes, accent.getText().toString(), "Pasted theme", onApplied);
+                        chooseScheme(context, schemes, accent.getText().toString(), "Pasted theme", null, onApplied);
                     } catch (ThemeException e) {
                         error(context, e.getMessage());
                     }
@@ -119,21 +135,21 @@ public final class ThemeSection {
 
     /** Asks which scheme to use when there's more than one, then applies it. */
     static void chooseScheme(Context context, List<SpicetifyTheme.Scheme> schemes, String accentKey,
-            String themeName, Runnable onApplied) {
+            String themeName, byte[] background, Runnable onApplied) {
         if (schemes.size() == 1) {
-            applyScheme(context, schemes.get(0), accentKey, themeName, onApplied);
+            applyScheme(context, schemes.get(0), accentKey, themeName, background, onApplied);
             return;
         }
         String[] names = new String[schemes.size()];
         for (int i = 0; i < names.length; i++) names[i] = schemes.get(i).name;
         new AlertDialog.Builder(context).setTitle("Choose a color scheme")
                 .setItems(names, (dialog, which) ->
-                        applyScheme(context, schemes.get(which), accentKey, themeName, onApplied))
+                        applyScheme(context, schemes.get(which), accentKey, themeName, background, onApplied))
                 .setNegativeButton("Cancel", null).show();
     }
 
     static void applyScheme(Context context, SpicetifyTheme.Scheme scheme, String accentKey,
-            String themeName, Runnable onApplied) {
+            String themeName, byte[] background, Runnable onApplied) {
         String key = accentKey == null || accentKey.trim().isEmpty() ? "button" : accentKey.trim().toLowerCase(Locale.ROOT);
         try {
             ThemeResolver.Result theme = ThemeResolver.resolve(scheme.colors, key);
@@ -144,7 +160,9 @@ public final class ThemeSection {
             }
             List<String> warnings = ThemeResolver.warnings(theme);
             if (!warnings.isEmpty()) Toast.makeText(context, String.join(" ", warnings), Toast.LENGTH_LONG).show();
-            apply(context, new ThemeState.Selection(ThemeState.SCHEME, label, theme.colors), onApplied);
+            // The image only shows through a see-through page.
+            Map<String, Integer> colors = background == null ? theme.colors : ThemeResolver.seeThrough(theme.colors);
+            apply(context, new ThemeState.Selection(ThemeState.SCHEME, label, colors), background, onApplied);
         } catch (ThemeException e) {
             error(context, e.getMessage());
         }
