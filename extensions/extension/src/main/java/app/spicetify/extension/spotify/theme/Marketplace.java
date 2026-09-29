@@ -1,5 +1,6 @@
 package app.spicetify.extension.spotify.theme;
 
+import app.spicetify.extension.spotify.extensions.Extensions;
 import java.io.ByteArrayOutputStream;
 import java.io.FileNotFoundException;
 import java.io.IOException;
@@ -23,12 +24,13 @@ import org.json.JSONObject;
 import org.json.JSONTokener;
 
 /**
- * The Spicetify Marketplace's theme listing, read from GitHub by the rules Marketplace uses
- * (spicetify/marketplace, FetchRemotes.ts and Utils.ts at ec6f772).
+ * The Spicetify Marketplace's theme and extension listing, read from GitHub by the rules
+ * Marketplace uses (spicetify/marketplace, FetchRemotes.ts and Utils.ts at ec6f772).
  */
 final class Marketplace {
-    static final String SEARCH_URL = "https://api.github.com/search/repositories"
-            + "?q=topic%3Aspicetify-themes&sort=stars&order=desc&per_page=100&page=";
+    static final String THEMES_TOPIC = "spicetify-themes";
+    static final String EXTENSIONS_TOPIC = "spicetify-extensions";
+    static final String SEARCH_URL = searchUrl(THEMES_TOPIC);
     static final String BLACKLIST_URL =
             "https://raw.githubusercontent.com/spicetify/marketplace/main/resources/blacklist.json";
     private static final int MAX_BYTES = 8 * 1024 * 1024;
@@ -38,6 +40,11 @@ final class Marketplace {
     private static final int MAX_ITEMS = 50;
     private static final int MAX_NAME_CHARS = 100;
     private static final int MAX_DESCRIPTION_CHARS = 300;
+
+    /** GitHub's search-by-topic URL for one page of results; append the page number. */
+    static String searchUrl(String topic) {
+        return "https://api.github.com/search/repositories?q=topic%3A" + topic + "&sort=stars&order=desc&per_page=100&page=";
+    }
 
     interface Fetcher {
         String get(String url) throws IOException;
@@ -141,12 +148,16 @@ final class Marketplace {
         }
     }
 
+    /** Which of the two Marketplace listings an item belongs to. */
+    enum Kind { THEME, EXTENSION }
+
     static final class Theme {
         final String title;
         final String description;
         final String author;
         /** Null when the manifest names no preview. */
         final String previewUrl;
+        /** Null for extensions. */
         final String schemesUrl;
         final String repoUrl;
         /** Negative when unknown. */
@@ -158,13 +169,19 @@ final class Marketplace {
          * image, if it has one, is found in its include JS or user.css.
          */
         final String backgroundUrl;
-        /** Null when the theme came from a cache written before it was kept. */
+        /** Null when the theme came from a cache written before it was kept, or for extensions. */
         final String usercssUrl;
-        /** The JavaScript files the theme includes, in manifest order. */
+        /** The JavaScript files the theme includes, in manifest order; empty for extensions. */
         final List<String> includeUrls;
+        final Kind kind;
+        /** Resolved link to the extension's script; null for themes. */
+        final String mainUrl;
+        /** This extension's Android id, when a port exists; null for themes and unported extensions. */
+        final String androidId;
 
         Theme(String title, String description, String author, String previewUrl, String schemesUrl,
-                String repoUrl, int stars, int order, String backgroundUrl, String usercssUrl, List<String> includeUrls) {
+                String repoUrl, int stars, int order, String backgroundUrl, String usercssUrl, List<String> includeUrls,
+                Kind kind, String mainUrl, String androidId) {
             this.title = title;
             this.description = description;
             this.author = author;
@@ -176,6 +193,9 @@ final class Marketplace {
             this.backgroundUrl = backgroundUrl;
             this.usercssUrl = usercssUrl;
             this.includeUrls = includeUrls;
+            this.kind = kind;
+            this.mainUrl = mainUrl;
+            this.androidId = androidId;
         }
     }
 
@@ -186,7 +206,7 @@ final class Marketplace {
             "https://raw.githubusercontent.com/harbassan/spicetify-galaxy/main/color.ini",
             "https://github.com/harbassan/spicetify-galaxy", -1, -1,
             "https://raw.githubusercontent.com/harbassan/spicetify-galaxy/main/assets/default_bg.jpg",
-            null, Collections.emptyList());
+            null, Collections.emptyList(), Kind.THEME, null, null);
 
     static final class Page {
         final List<Repo> repos;
@@ -272,9 +292,11 @@ final class Marketplace {
     }
 
     /**
-     * Theme items of a manifest (one object or an array): name, description and usercss, as
-     * Marketplace requires, plus schemes, without which there is nothing to use on Android. Only
-     * the first 50 items count, and long names and descriptions are cut short.
+     * Theme and extension items of a manifest (one object or an array). A theme needs name,
+     * description and usercss, as Marketplace requires, plus schemes, without which there is
+     * nothing to use on Android; an extension needs name, description and main. An item that
+     * qualifies as both becomes two entries, the theme first. Only the first 50 items count, and
+     * long names and descriptions are cut short.
      */
     static List<Theme> parseManifest(String json, Repo repo, int repoIndex) throws JSONException {
         String text = json.startsWith("\ufeff") ? json.substring(1) : json;
@@ -293,18 +315,31 @@ final class Marketplace {
             if (item == null) continue;
             String title = string(item, "name");
             String description = string(item, "description");
-            String usercss = string(item, "usercss");
-            String schemes = string(item, "schemes");
-            if (title.isEmpty() || description.isEmpty() || usercss.isEmpty() || schemes.isEmpty()) continue;
+            if (title.isEmpty() || description.isEmpty()) continue;
+            String cappedTitle = cap(title, MAX_NAME_CHARS);
+            String cappedDescription = cap(description, MAX_DESCRIPTION_CHARS);
             String branch = string(item, "branch");
             if (branch.isEmpty()) branch = repo.branch;
+            String authorName = cap(author(item, repo), MAX_NAME_CHARS);
             String preview = string(item, "preview");
-            List<String> includes = new ArrayList<>();
-            for (String include : strings(item.opt("include"))) includes.add(resolve(include, repo, branch));
-            themes.add(new Theme(cap(title, MAX_NAME_CHARS), cap(description, MAX_DESCRIPTION_CHARS),
-                    cap(author(item, repo), MAX_NAME_CHARS),
-                    preview.isEmpty() ? null : resolve(preview, repo, branch), resolve(schemes, repo, branch),
-                    repo.url, repo.stars, repoIndex * 1000 + i, null, resolve(usercss, repo, branch), includes));
+            String previewUrl = preview.isEmpty() ? null : resolve(preview, repo, branch);
+            int order = repoIndex * 1000 + i;
+
+            String usercss = string(item, "usercss");
+            String schemes = string(item, "schemes");
+            if (!usercss.isEmpty() && !schemes.isEmpty()) {
+                List<String> includes = new ArrayList<>();
+                for (String include : strings(item.opt("include"))) includes.add(resolve(include, repo, branch));
+                themes.add(new Theme(cappedTitle, cappedDescription, authorName, previewUrl,
+                        resolve(schemes, repo, branch), repo.url, repo.stars, order, null,
+                        resolve(usercss, repo, branch), includes, Kind.THEME, null, null));
+            }
+            String main = string(item, "main");
+            if (!main.isEmpty()) {
+                themes.add(new Theme(cappedTitle, cappedDescription, authorName, previewUrl, null,
+                        repo.url, repo.stars, order, null, null, Collections.emptyList(),
+                        Kind.EXTENSION, resolve(main, repo, branch), Extensions.portFor(repo.owner, repo.name, main)));
+            }
         }
         return themes;
     }
@@ -363,14 +398,20 @@ final class Marketplace {
         for (Theme theme : themes) {
             array.put(new JSONObject().put("title", theme.title).put("description", theme.description)
                     .put("author", theme.author).put("preview", theme.previewUrl == null ? JSONObject.NULL : theme.previewUrl)
-                    .put("schemes", theme.schemesUrl).put("repo", theme.repoUrl)
+                    .put("schemes", theme.schemesUrl == null ? JSONObject.NULL : theme.schemesUrl).put("repo", theme.repoUrl)
                     .put("stars", theme.stars).put("order", theme.order)
-                    .put("usercss", theme.usercssUrl).put("include", new JSONArray(theme.includeUrls)));
+                    .put("usercss", theme.usercssUrl).put("include", new JSONArray(theme.includeUrls))
+                    .put("kind", theme.kind == Kind.EXTENSION ? "extension" : "theme")
+                    .put("main", theme.mainUrl == null ? JSONObject.NULL : theme.mainUrl)
+                    .put("android", theme.androidId == null ? JSONObject.NULL : theme.androidId));
         }
         return new JSONObject().put("savedAt", savedAt).put("themes", array).toString();
     }
 
-    /** A cache written before usercss and include were kept still loads, with nothing to find an image in. */
+    /**
+     * A cache written before usercss and include were kept still loads, with nothing to find an
+     * image in; one written before kind, main and android were kept loads every item as a theme.
+     */
     static Cached fromJson(String json) throws JSONException {
         JSONObject root = new JSONObject(json);
         JSONArray array = root.getJSONArray("themes");
@@ -379,10 +420,15 @@ final class Marketplace {
             JSONObject item = array.getJSONObject(i);
             String preview = string(item, "preview");
             String usercss = string(item, "usercss");
+            String schemes = string(item, "schemes");
+            String main = string(item, "main");
+            String android = string(item, "android");
             themes.add(new Theme(item.getString("title"), item.getString("description"), item.getString("author"),
-                    preview.isEmpty() ? null : preview, item.getString("schemes"), item.getString("repo"),
+                    preview.isEmpty() ? null : preview, schemes.isEmpty() ? null : schemes, item.getString("repo"),
                     item.getInt("stars"), item.getInt("order"), null,
-                    usercss.isEmpty() ? null : usercss, strings(item.opt("include"))));
+                    usercss.isEmpty() ? null : usercss, strings(item.opt("include")),
+                    "extension".equals(string(item, "kind")) ? Kind.EXTENSION : Kind.THEME,
+                    main.isEmpty() ? null : main, android.isEmpty() ? null : android));
         }
         return new Cached(themes, root.getLong("savedAt"));
     }

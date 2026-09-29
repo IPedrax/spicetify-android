@@ -27,6 +27,8 @@ import org.robolectric.annotation.Config;
 public class MarketplaceTest {
     private static final Marketplace.Repo GALAXY =
             new Marketplace.Repo("harbassan", "spicetify-galaxy", "main", "https://github.com/harbassan/spicetify-galaxy", 612);
+    private static final Marketplace.Repo SPICETIFY_CLI =
+            new Marketplace.Repo("spicetify", "cli", "main", "https://github.com/spicetify/cli", 8000);
 
     @Test
     public void readsSearchResults() throws Exception {
@@ -79,12 +81,63 @@ public class MarketplaceTest {
                 + "{\"name\":\"No schemes\",\"description\":\"b\",\"usercss\":\"b.css\"},"
                 + "{\"name\":\"Extension\",\"description\":\"c\",\"main\":\"c.js\"},"
                 + "{\"name\":\"B\",\"description\":\"b\",\"usercss\":\"b.css\",\"schemes\":\"themes/B/color.ini\",\"branch\":\"dev\"}]", GALAXY, 3);
-        assertEquals(2, many.size());
+        assertEquals(3, many.size()); // "Extension" has no usercss or schemes, but its main qualifies it as an extension
         assertEquals("https://example.com/a.ini", many.get(0).schemesUrl);
         assertNull(many.get(0).previewUrl);
         assertEquals("harbassan", many.get(0).author);
-        assertEquals("https://raw.githubusercontent.com/harbassan/spicetify-galaxy/dev/themes/B/color.ini", many.get(1).schemesUrl);
-        assertTrue(many.get(0).order < many.get(1).order);
+        assertEquals(Marketplace.Kind.EXTENSION, many.get(1).kind);
+        assertEquals("https://raw.githubusercontent.com/harbassan/spicetify-galaxy/dev/themes/B/color.ini", many.get(2).schemesUrl);
+        assertTrue(many.get(0).order < many.get(2).order);
+    }
+
+    @Test
+    public void parseManifestAlsoEmitsExtensionItems() throws Exception {
+        List<Marketplace.Theme> items = Marketplace.parseManifest("["
+                + "{\"name\":\"Galaxy\",\"description\":\"d\",\"usercss\":\"u.css\",\"schemes\":\"c.ini\"},"
+                + "{\"name\":\"Trash Bin\",\"description\":\"d\",\"main\":\"Extensions/trashbin.js\"},"
+                + "{\"name\":\"X\",\"description\":\"d\"}]", SPICETIFY_CLI, 0);
+        assertEquals(2, items.size());
+        assertEquals(Marketplace.Kind.THEME, items.get(0).kind);
+        Marketplace.Theme extension = items.get(1);
+        assertEquals(Marketplace.Kind.EXTENSION, extension.kind);
+        assertEquals("Trash Bin", extension.title);
+        assertEquals("https://raw.githubusercontent.com/spicetify/cli/main/Extensions/trashbin.js", extension.mainUrl);
+        assertEquals("trash_bin", extension.androidId);
+    }
+
+    @Test
+    public void anItemThatQualifiesAsBothKindsBecomesTwoEntriesThemeFirst() throws Exception {
+        List<Marketplace.Theme> items = Marketplace.parseManifest("{\"name\":\"Galaxy\",\"description\":\"d\","
+                + "\"usercss\":\"u.css\",\"schemes\":\"c.ini\",\"main\":\"theme.js\"}", GALAXY, 0);
+        assertEquals(2, items.size());
+        assertEquals(Marketplace.Kind.THEME, items.get(0).kind);
+        assertEquals(Marketplace.Kind.EXTENSION, items.get(1).kind);
+        assertEquals(items.get(0).order, items.get(1).order); // one manifest item, so one order value
+        assertEquals("Galaxy", items.get(1).title);
+        assertNull(items.get(1).schemesUrl);
+    }
+
+    @Test
+    public void maxItemsCapCountsManifestItemsNotOutputEntries() throws Exception {
+        StringBuilder manifest = new StringBuilder("[");
+        for (int i = 0; i < 51; i++) {
+            if (i > 0) manifest.append(',');
+            manifest.append("{\"name\":\"T").append(i).append("\",\"description\":\"d\",\"usercss\":\"u.css\","
+                    + "\"schemes\":\"c.ini\",\"main\":\"e.js\"}");
+        }
+        List<Marketplace.Theme> items = Marketplace.parseManifest(manifest.append(']').toString(), GALAXY, 1);
+        assertEquals(100, items.size()); // 50 manifest items, each a theme and an extension
+        assertEquals("T49", items.get(99).title);
+        assertEquals(Marketplace.Kind.EXTENSION, items.get(99).kind);
+        assertTrue(items.get(99).order < 2000); // stays ahead of the next repository's items
+    }
+
+    @Test
+    public void buildsTheSearchUrlPerTopic() {
+        assertTrue(Marketplace.searchUrl("spicetify-extensions").endsWith("page="));
+        assertEquals(Marketplace.SEARCH_URL, Marketplace.searchUrl("spicetify-themes"));
+        assertEquals("spicetify-themes", Marketplace.THEMES_TOPIC);
+        assertEquals("spicetify-extensions", Marketplace.EXTENSIONS_TOPIC);
     }
 
     @Test
@@ -132,9 +185,12 @@ public class MarketplaceTest {
 
     @Test
     public void sortsByStarOrderThenManifestOrder() {
-        Marketplace.Theme first = new Marketplace.Theme("a", "d", "o", null, "s", "r", 9, 0, null, "u", Collections.emptyList());
-        Marketplace.Theme second = new Marketplace.Theme("b", "d", "o", null, "s", "r", 9, 1, null, "u", Collections.emptyList());
-        Marketplace.Theme third = new Marketplace.Theme("c", "d", "o", null, "s", "r", 5, 1000, null, "u", Collections.emptyList());
+        Marketplace.Theme first = new Marketplace.Theme(
+                "a", "d", "o", null, "s", "r", 9, 0, null, "u", Collections.emptyList(), Marketplace.Kind.THEME, null, null);
+        Marketplace.Theme second = new Marketplace.Theme(
+                "b", "d", "o", null, "s", "r", 9, 1, null, "u", Collections.emptyList(), Marketplace.Kind.THEME, null, null);
+        Marketplace.Theme third = new Marketplace.Theme(
+                "c", "d", "o", null, "s", "r", 5, 1000, null, "u", Collections.emptyList(), Marketplace.Kind.THEME, null, null);
         assertEquals(Arrays.asList(first, second, third), Marketplace.sorted(Arrays.asList(third, first, second)));
     }
 
@@ -186,17 +242,28 @@ public class MarketplaceTest {
 
     @Test
     public void roundTripsTheCache() throws Exception {
-        List<Marketplace.Theme> themes = Marketplace.parseManifest("{\"name\":\"Galaxy\",\"description\":\"d\","
-                + "\"usercss\":\"u.css\",\"schemes\":\"c.ini\",\"include\":\"theme.js\"}", GALAXY, 2);
+        List<Marketplace.Theme> themes = Marketplace.parseManifest("["
+                + "{\"name\":\"Galaxy\",\"description\":\"d\",\"usercss\":\"u.css\",\"schemes\":\"c.ini\",\"include\":\"theme.js\"},"
+                + "{\"name\":\"Trash Bin\",\"description\":\"d\",\"main\":\"Extensions/trashbin.js\"}]", SPICETIFY_CLI, 2);
         Marketplace.Cached cached = Marketplace.fromJson(Marketplace.toJson(themes, 1234L));
         assertEquals(1234L, cached.savedAt);
         Marketplace.Theme theme = cached.themes.get(0);
         assertEquals("Galaxy", theme.title);
+        assertEquals(Marketplace.Kind.THEME, theme.kind);
         assertEquals(themes.get(0).schemesUrl, theme.schemesUrl);
         assertNull(theme.previewUrl);
         assertEquals(themes.get(0).order, theme.order);
         assertEquals(themes.get(0).usercssUrl, theme.usercssUrl);
         assertEquals(themes.get(0).includeUrls, theme.includeUrls);
+        assertNull(theme.mainUrl);
+        assertNull(theme.androidId);
+
+        Marketplace.Theme extension = cached.themes.get(1);
+        assertEquals(Marketplace.Kind.EXTENSION, extension.kind);
+        assertEquals(themes.get(1).mainUrl, extension.mainUrl);
+        assertEquals("trash_bin", extension.androidId);
+        assertNull(extension.schemesUrl);
+        assertNull(extension.usercssUrl);
     }
 
     @Test
@@ -207,6 +274,9 @@ public class MarketplaceTest {
         assertEquals("Galaxy", theme.title);
         assertNull(theme.usercssUrl); // so it has no image to find
         assertTrue(theme.includeUrls.isEmpty());
+        assertEquals(Marketplace.Kind.THEME, theme.kind); // a missing "kind" means THEME
+        assertNull(theme.mainUrl);
+        assertNull(theme.androidId);
     }
 
     private static String repeat(char c, int count) {
