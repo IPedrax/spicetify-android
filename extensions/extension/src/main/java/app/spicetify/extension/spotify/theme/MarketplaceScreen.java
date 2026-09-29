@@ -27,6 +27,7 @@ import android.widget.Toast;
 import app.spicetify.extension.spotify.settings.SpicetifySettingsScreen;
 import java.io.File;
 import java.io.FileNotFoundException;
+import java.io.IOException;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
@@ -38,8 +39,8 @@ import java.util.concurrent.TimeUnit;
 
 /**
  * The Spicetify Marketplace: a full-screen theme browser reached from the Theme section. Lists
- * community themes, downloads a tapped theme's color scheme, and hands it to
- * {@link ThemeSection#chooseScheme}.
+ * community themes, downloads a tapped theme's color scheme and any background image, and hands
+ * them to {@link ThemeSection#chooseScheme}.
  */
 final class MarketplaceScreen {
     private static final String BACKGROUND_COLOR = "#121212";
@@ -57,6 +58,7 @@ final class MarketplaceScreen {
     private final Executor background;
     private final Executor downloads;
     private final Marketplace.Fetcher fetcher;
+    private final PreviewImages.Downloader imageFetcher;
     private final Runnable onApplied;
     private final int rowWidthPx;
     private final Adapter adapter = new Adapter();
@@ -95,14 +97,15 @@ final class MarketplaceScreen {
     /** The theme whose color scheme is downloading, or null. */
     private Marketplace.Theme downloading;
 
-    private MarketplaceScreen(Context context, MarketplaceLoader loader, PreviewImages previews,
-            Executor background, Executor downloads, Marketplace.Fetcher fetcher, Runnable onApplied) {
+    private MarketplaceScreen(Context context, MarketplaceLoader loader, PreviewImages previews, Executor background,
+            Executor downloads, Marketplace.Fetcher fetcher, PreviewImages.Downloader imageFetcher, Runnable onApplied) {
         this.context = context;
         this.loader = loader;
         this.previews = previews;
         this.background = background;
         this.downloads = downloads;
         this.fetcher = fetcher;
+        this.imageFetcher = imageFetcher;
         this.onApplied = onApplied;
         this.rowWidthPx = context.getResources().getDisplayMetrics().widthPixels;
     }
@@ -111,7 +114,7 @@ final class MarketplaceScreen {
     static void open(Context context, Runnable onApplied) {
         File cache = new File(context.getCacheDir(), "spicetify_marketplace.json");
         MarketplaceLoader loader = new MarketplaceLoader(Marketplace.HTTP, MANIFESTS, cache, System::currentTimeMillis);
-        show(context, loader, previewImages(), BACKGROUND, DOWNLOADS, Marketplace.HTTP, onApplied);
+        show(context, loader, previewImages(), BACKGROUND, DOWNLOADS, Marketplace.HTTP, PreviewImages.HTTP, onApplied);
     }
 
     /** One {@link PreviewImages} for the process, so reopening the Marketplace reuses cached thumbnails. */
@@ -130,8 +133,8 @@ final class MarketplaceScreen {
 
     /** Loads run on {@code background} and theme downloads on {@code downloads}, so a tap never waits for a load. */
     static void show(Context context, MarketplaceLoader loader, PreviewImages previews, Executor background,
-            Executor downloads, Marketplace.Fetcher fetcher, Runnable onApplied) {
-        new MarketplaceScreen(context, loader, previews, background, downloads, fetcher, onApplied).build();
+            Executor downloads, Marketplace.Fetcher fetcher, PreviewImages.Downloader imageFetcher, Runnable onApplied) {
+        new MarketplaceScreen(context, loader, previews, background, downloads, fetcher, imageFetcher, onApplied).build();
     }
 
     private void build() {
@@ -248,7 +251,10 @@ final class MarketplaceScreen {
 
     /** Re-derives the filtered list from the current search text and updates the status row. */
     private void applyFilter() {
-        List<Marketplace.Theme> filtered = Marketplace.filter(allThemes, search.getText().toString());
+        List<Marketplace.Theme> themes = new ArrayList<>();
+        themes.add(Marketplace.GALAXY_V2); // pinned above the GitHub results
+        themes.addAll(allThemes);
+        List<Marketplace.Theme> filtered = Marketplace.filter(themes, search.getText().toString());
         adapter.setThemes(filtered);
         String message = null;
         if (loading) {
@@ -282,8 +288,9 @@ final class MarketplaceScreen {
     }
 
     /**
-     * Downloads and reads a theme's color.ini on the download thread, and returns what to show
-     * for it on the main thread: the scheme chooser, or why there's none. Never throws.
+     * Downloads and reads a theme's color.ini on the download thread, then its background image if
+     * it has one, and returns what to show for it on the main thread: the scheme chooser, or why
+     * there's none. Never throws.
      */
     private Runnable download(Marketplace.Theme theme) {
         try {
@@ -292,7 +299,15 @@ final class MarketplaceScreen {
                 if (!scheme.colors.isEmpty()) usable.add(scheme);
             }
             if (usable.isEmpty()) return () -> ThemeSection.error(context, theme.title + " has no colors Spotify can use.");
-            return () -> ThemeSection.chooseScheme(context, usable, "button", theme.title, null, () -> {
+            byte[] image;
+            try {
+                image = theme.backgroundUrl == null ? null : imageFetcher.get(theme.backgroundUrl);
+            } catch (IOException e) {
+                Log.w("Spicetify", "Marketplace background image download failed: " + theme.backgroundUrl, e);
+                String message = "Couldn't download " + theme.title + "'s background image: " + ThemeSection.describe(e);
+                return () -> ThemeSection.error(context, message);
+            }
+            return () -> ThemeSection.chooseScheme(context, usable, "button", theme.title, image, () -> {
                 dialog.dismiss();
                 onApplied.run();
             });
@@ -348,7 +363,8 @@ final class MarketplaceScreen {
         public View getView(int position, View convertView, ViewGroup parent) {
             Row row = convertView != null ? (Row) convertView.getTag() : new Row(context);
             Marketplace.Theme theme = themes.get(position);
-            String subtitle = theme.author + ", " + theme.stars + (theme.stars == 1 ? " star" : " stars");
+            String subtitle = theme.stars < 0 ? theme.author
+                    : theme.author + ", " + theme.stars + (theme.stars == 1 ? " star" : " stars");
             row.title.setText(theme.title);
             row.subtitle.setText(subtitle);
             row.description.setText(theme.description);
