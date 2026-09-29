@@ -1,3 +1,9 @@
+## [1.0.1](https://github.com/IPedrax/spicetify-android/compare/v1.0.0...v1.0.1) (2026-09-29)
+
+### 🐛 Bug Fixes
+
+* name the bundle Spicetify Android patches ([fde7cf8](https://github.com/IPedrax/spicetify-android/commit/fde7cf8192b7aa1d7816ebfd98e2c4e351ebc255))
+
 ## 1.0.0 (2026-09-29)
 
 ### 🐛 Bug Fixes
