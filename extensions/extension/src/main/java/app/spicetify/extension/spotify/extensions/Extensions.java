@@ -183,12 +183,11 @@ public final class Extensions {
         registered = true;
         // Each extension adds its register() call here, in a try of its own, so one that throws
         // can't stop the others registering or reach Spotify through setOn or controls:
-        //
-        //     try {
-        //         TrashBin.register();
-        //     } catch (Throwable e) {
-        //         Log.w("Spicetify", "Couldn't register Trash Bin", e);
-        //     }
+        try {
+            TrashBin.register();
+        } catch (Throwable e) {
+            Log.w("Spicetify", "Couldn't register Trash Bin", e);
+        }
     }
 
     /**
