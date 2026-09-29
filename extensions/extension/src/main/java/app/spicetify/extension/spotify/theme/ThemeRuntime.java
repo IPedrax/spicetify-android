@@ -55,6 +55,9 @@ public final class ThemeRuntime {
     /** Registers the overlay for a selection, or removes it for Spotify's own colors. */
     private static void register(Context context, ThemeState.Selection selection) throws IOException {
         Map<String, Integer> values = ThemeRoleMap.overlayValues(ThemeRoleMap.load(), roleColors(context, selection));
+        // Compose reads the same values from memory, so it follows the theme even if the overlay fails.
+        // Spike: a background image makes the page background see-through.
+        ComposeTheme.update(values, ThemeBackground.hasImage(context));
         if (values.isEmpty()) {
             ThemeOverlay.unregister(context);
         } else {
@@ -77,7 +80,10 @@ public final class ThemeRuntime {
         }
     }
 
-    /** Loads the theme into each activity's resources before any of its views exist. */
+    /**
+     * Loads the theme into each activity's resources before any of its views exist, and draws the
+     * spike background image after, once the activity's own onCreate can no longer overwrite it.
+     */
     @TargetApi(Build.VERSION_CODES.Q)
     private static final class Callbacks implements Application.ActivityLifecycleCallbacks {
         @Override
@@ -90,6 +96,16 @@ public final class ThemeRuntime {
         }
 
         @Override public void onActivityCreated(Activity activity, Bundle state) {}
+
+        @Override
+        public void onActivityPostCreated(Activity activity, Bundle state) {
+            try {
+                ThemeBackground.applyTo(activity);
+            } catch (RuntimeException e) {
+                Log.w(TAG, "Background could not be applied to " + activity.getClass().getName(), e);
+            }
+        }
+
         @Override public void onActivityStarted(Activity activity) {}
         @Override public void onActivityResumed(Activity activity) {}
         @Override public void onActivityPaused(Activity activity) {}

@@ -14,7 +14,7 @@ class ThemeResourcesTest {
     fun `the role map covers every role and names each color once`() {
         assertEquals(ROLE_KEYS, roleMap.keys.toList())
         val names = roleMap.values.flatten()
-        assertEquals(40, names.size)
+        assertEquals(62, names.size)
         assertEquals(names.size, names.toSet().size)
     }
 
@@ -36,6 +36,26 @@ class ThemeResourcesTest {
         assertTrue(failure.message!!.contains("missing gray_20"))
         val duplicated = parse(fixture().replace("</resources>", "<color name=\"gray_7\">#FF121212</color></resources>"))
         assertThrows(IllegalArgumentException::class.java) { roleTable(duplicated, roleMap) }
+    }
+
+    @Test
+    fun `the Compose table gives each field path its color's stock value`() {
+        val paths = loadComposePaths()
+        assertEquals(listOf(83, 8), paths.map { it.size })
+        val (palette, raw) = composeTable(parse(fixture()), roleMap, paths).split(';')
+        assertEquals(83, palette.split(',').size)
+        assertTrue("a.a.c=dark_base_background_base@FF121212*" in palette.split(','))
+        assertTrue("a.a.b.a=dark_base_background_tinted_base@1AFFFFFF" in palette.split(','))
+        assertTrue(raw.startsWith("b.c=gray_7@FF121212,"))
+        assertTrue("d.d=gray_20@FF333333" in raw.split(','))
+        assertTrue("d.a=gray_7@FF121212*" in raw.split(','))
+    }
+
+    @Test
+    fun `a Compose path following an unmapped color fails with its name`() {
+        val paths = listOf(mapOf("a.a.e" to "dark_base_background_press"), emptyMap())
+        val failure = assertThrows(IllegalArgumentException::class.java) { composeTable(parse(fixture()), roleMap, paths) }
+        assertTrue(failure.message!!.contains("dark_base_background_press"))
     }
 
     @Test

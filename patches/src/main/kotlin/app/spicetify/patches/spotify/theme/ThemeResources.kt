@@ -19,14 +19,27 @@ internal val ROLE_KEYS = listOf(
 
 private object ThemeResourceAnchor
 
-/** Spotify's color resources for each role, in [ROLE_KEYS] order. */
-internal fun loadRoleMap(version: String = THEME_TARGET_VERSION): Map<String, List<String>> {
+private fun themeProperties(version: String): Properties {
     val stream = ThemeResourceAnchor::class.java.getResourceAsStream("/theme/$version.properties")
         ?: throw IllegalStateException("No theme resource map for Spotify $version")
-    val properties = Properties().apply { stream.use(::load) }
+    return Properties().apply { stream.use(::load) }
+}
+
+/** Spotify's color resources for each role, in [ROLE_KEYS] order. */
+internal fun loadRoleMap(version: String = THEME_TARGET_VERSION): Map<String, List<String>> {
+    val properties = themeProperties(version)
     return ROLE_KEYS.associateWith { key ->
         properties.getProperty(key).orEmpty().split(',').map(String::trim).filter(String::isNotEmpty)
     }.filterValues { it.isNotEmpty() }
+}
+
+/** Compose field paths to the resource each follows: Spotify's default dark Encore palette, then Encore's raw colors. */
+internal fun loadComposePaths(version: String = THEME_TARGET_VERSION): List<Map<String, String>> {
+    val properties = themeProperties(version)
+    return listOf("compose.", "primitive.").map { prefix ->
+        properties.stringPropertyNames().filter { it.startsWith(prefix) }.sorted()
+            .associate { it.removePrefix(prefix) to properties.getProperty(it).trim() }
+    }
 }
 
 internal fun colorElements(document: Document): List<Element> {
@@ -34,22 +47,28 @@ internal fun colorElements(document: Document): List<Element> {
     return (0 until children.length).mapNotNull { children.item(it) as? Element }.filter { it.tagName == "color" }
 }
 
-/** The alpha of a declared color, following `@color/` aliases. Other references count as opaque. */
-internal fun originalAlpha(name: String, declared: Map<String, String>): Int {
-    var value = declared[name] ?: return 0xFF
+/** The ARGB of a declared color, following `@color/` aliases; null for anything else. */
+internal fun stockColor(name: String, declared: Map<String, String>): Int? {
+    var value = declared[name] ?: return null
     val seen = mutableSetOf(name)
     while (value.startsWith("@color/")) {
         val next = value.removePrefix("@color/")
-        if (!seen.add(next)) return 0xFF
-        value = declared[next] ?: return 0xFF
+        if (!seen.add(next)) return null
+        value = declared[next] ?: return null
     }
-    return when {
-        !value.startsWith("#") -> null
-        value.length == 9 -> value.substring(1, 3).toIntOrNull(16)
-        value.length == 5 -> value.substring(1, 2).toIntOrNull(16)?.times(17)
+    if (!value.startsWith("#")) return null
+    // #RGB and #ARGB repeat each digit; the forms without alpha are opaque.
+    val digits = value.substring(1).let { if (it.length <= 4) it.flatMap { c -> listOf(c, c) }.joinToString("") else it }
+    return when (digits.length) {
+        6 -> "FF$digits"
+        8 -> digits
         else -> null
-    } ?: 0xFF
+    }?.toLongOrNull(16)?.toInt()
 }
+
+/** The alpha of a declared color, following `@color/` aliases. Other references count as opaque. */
+internal fun originalAlpha(name: String, declared: Map<String, String>): Int =
+    stockColor(name, declared)?.ushr(24) ?: 0xFF
 
 /**
  * The table the extension reads: `role:name,name@AA|role:...`, where `@AA` is the stock alpha of a
@@ -72,6 +91,24 @@ internal fun roleTable(document: Document, roleMap: Map<String, List<String>>): 
         role + ":" + targets.joinToString(",") { name ->
             val alpha = originalAlpha(name, declared)
             if (alpha == 0xFF) name else name + "@" + "%02X".format(alpha)
+        }
+    }
+}
+
+/**
+ * The table ComposeTheme reads: `path=name@AARRGGBB,...;path=...`, palette paths then raw color paths,
+ * with each color's stock value and the `*` of a field that turns see-through behind a background image.
+ * Fails when a path follows a color no role maps, since nothing would ever theme it.
+ */
+internal fun composeTable(document: Document, roleMap: Map<String, List<String>>, paths: List<Map<String, String>>): String {
+    val mapped = roleMap.values.flatten().toSet()
+    val declared = colorElements(document).associate { it.getAttribute("name") to it.textContent.trim() }
+    return paths.joinToString(";") { section ->
+        section.entries.joinToString(",") { (path, target) ->
+            val name = target.removeSuffix("*")
+            require(name in mapped) { "Compose color $path follows $name, which no theme role maps." }
+            val stock = requireNotNull(stockColor(name, declared)) { "Compose color $path: $name has no stock color." }
+            "$path=$name@%08X".format(stock) + target.substring(name.length)
         }
     }
 }
