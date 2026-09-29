@@ -19,4 +19,8 @@ public final class InstalledPatches {
     public static boolean serverFiles() {
         return false;
     }
+
+    public static boolean extensions() {
+        return false;
+    }
 }

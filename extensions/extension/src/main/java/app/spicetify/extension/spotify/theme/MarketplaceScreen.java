@@ -1,11 +1,14 @@
 package app.spicetify.extension.spotify.theme;
 
+import android.app.AlertDialog;
 import android.app.Dialog;
 import android.content.Context;
+import android.content.Intent;
 import android.content.res.ColorStateList;
 import android.graphics.BitmapFactory;
 import android.graphics.Color;
 import android.graphics.Typeface;
+import android.net.Uri;
 import android.text.Editable;
 import android.text.TextUtils;
 import android.text.TextWatcher;
@@ -24,15 +27,20 @@ import android.widget.ImageView;
 import android.widget.LinearLayout;
 import android.widget.ListView;
 import android.widget.ProgressBar;
+import android.widget.Switch;
 import android.widget.TextView;
 import android.widget.Toast;
+import app.spicetify.extension.spotify.extensions.Extensions;
+import app.spicetify.extension.spotify.settings.InstalledPatches;
 import app.spicetify.extension.spotify.settings.SpicetifySettingsScreen;
 import java.io.File;
 import java.io.FileNotFoundException;
 import java.io.IOException;
 import java.util.ArrayList;
 import java.util.Collections;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.concurrent.Executor;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.LinkedBlockingQueue;
@@ -40,13 +48,29 @@ import java.util.concurrent.ThreadPoolExecutor;
 import java.util.concurrent.TimeUnit;
 
 /**
- * The Spicetify Marketplace: a full-screen theme browser reached from the Theme section. Lists
- * community themes, downloads a tapped theme's color scheme and any background image, and hands
- * them to {@link ThemeSection#chooseScheme}.
+ * The Spicetify Marketplace: a full-screen browser of themes and extensions reached from the Theme
+ * section. The Theme section's presets, Galaxy V2 and Play a random song are pinned above the
+ * community items. A tapped preset applies. A tapped theme's color scheme and any background image
+ * download and go to {@link ThemeSection#chooseScheme}. An extension with an Android version has a
+ * switch and a dialog, and any other extension links to its GitHub page.
  */
 final class MarketplaceScreen {
     private static final String BACKGROUND_COLOR = "#121212";
     private static final String PLACEHOLDER_COLOR = "#282828";
+    /** The Theme section's presets, pinned first as cards: kind, label, and what it looks like. */
+    private static final String[][] PRESETS = {
+            {ThemePresets.STOCK, "Spotify default", "Spotify's own colors."},
+            {ThemePresets.AMOLED, "AMOLED black", "A black background, with menus and sheets slightly lighter."},
+            {ThemePresets.MATERIAL_YOU, "Material You",
+                    "Your wallpaper's palette. It updates when Spotify starts after a wallpaper change."},
+            {ThemePresets.MATERIAL_YOU_BLACK, "Material You, black background",
+                    "The wallpaper's accents on a black background."},
+    };
+    /** The author of the cards built into the Marketplace. */
+    private static final String BUILT_IN_AUTHOR = "Spicetify for Android";
+    /** The roles a preset card's strip shows, and Spotify's own colors for them. */
+    private static final String[] STRIP_ROLES = {"main", "card", "button", "text"};
+    private static final int[] STOCK_STRIP = {0xFF121212, 0xFF282828, 0xFF1ED760, 0xFFFFFFFF};
     /**
      * A theme's own image smaller than this on either side is a texture tile, like Spotify Dark's
      * 70x70 ones, not a background; the real ones start at Galaxy's 1200x675.
@@ -69,6 +93,10 @@ final class MarketplaceScreen {
     private final Runnable onApplied;
     private final int rowWidthPx;
     private final Adapter adapter = new Adapter();
+    /** Above the GitHub results, in order: the preset cards, Galaxy V2 and Play a random song. */
+    private final List<Marketplace.Theme> pinned = new ArrayList<>();
+    /** Each preset card's {@link ThemePresets} kind. */
+    private final Map<Marketplace.Theme, String> presets = new HashMap<>();
 
     private final MarketplaceLoader.Listener listener = new MarketplaceLoader.Listener() {
         @Override
@@ -88,6 +116,14 @@ final class MarketplaceScreen {
                 applyFilter();
             });
         }
+
+        @Override
+        public void onNotice(String message) {
+            ThemeSection.onMain(() -> {
+                notice = message;
+                applyFilter();
+            });
+        }
     };
 
     private Dialog dialog;
@@ -97,6 +133,8 @@ final class MarketplaceScreen {
     private Button retry;
     private List<Marketplace.Theme> allThemes = Collections.emptyList();
     private String errorMessage;
+    /** Why part of the list, such as the extensions, couldn't load; shown when the status has nothing else to say. */
+    private String notice;
     /** From the start of a load until its last call. */
     private boolean loading;
     /** Set when a load starts with a list on screen: that list stays until the load is done. */
@@ -115,6 +153,20 @@ final class MarketplaceScreen {
         this.imageFetcher = imageFetcher;
         this.onApplied = onApplied;
         this.rowWidthPx = context.getResources().getDisplayMetrics().widthPixels;
+        for (String[] preset : PRESETS) {
+            Marketplace.Theme card = builtIn(preset[1], preset[2], Marketplace.Kind.THEME, null);
+            pinned.add(card);
+            presets.put(card, preset[0]);
+        }
+        pinned.add(Marketplace.GALAXY_V2);
+        pinned.add(builtIn(Extensions.title(Extensions.RANDOM_SONG), Extensions.description(Extensions.RANDOM_SONG),
+                Marketplace.Kind.EXTENSION, Extensions.RANDOM_SONG));
+    }
+
+    /** A card built into the Marketplace rather than read from GitHub: no preview, repository or stars. */
+    private static Marketplace.Theme builtIn(String title, String description, Marketplace.Kind kind, String androidId) {
+        return new Marketplace.Theme(title, description, BUILT_IN_AUTHOR, null, null, null, -1, -1, null, null,
+                Collections.emptyList(), kind, null, androidId);
     }
 
     /** Opens the Marketplace with production collaborators: real network access, real caching. */
@@ -160,7 +212,7 @@ final class MarketplaceScreen {
         list.setDivider(null);
         list.setDividerHeight(0);
         list.setAdapter(adapter);
-        list.setOnItemClickListener((parent, view, position, id) -> guarded(() -> openTheme(adapter.getItem(position))));
+        list.setOnItemClickListener((parent, view, position, id) -> guarded(() -> openItem(adapter.getItem(position))));
         root.addView(list, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f));
 
         dialog.setContentView(root);
@@ -244,6 +296,7 @@ final class MarketplaceScreen {
         if (loading) return;
         loading = true;
         errorMessage = null;
+        notice = null;
         keepList = !allThemes.isEmpty();
         applyFilter();
         background.execute(() -> {
@@ -258,12 +311,11 @@ final class MarketplaceScreen {
 
     /** Re-derives the filtered list from the current search text and updates the status row. */
     private void applyFilter() {
-        List<Marketplace.Theme> themes = new ArrayList<>();
-        themes.add(Marketplace.GALAXY_V2); // pinned above the GitHub results
+        List<Marketplace.Theme> themes = new ArrayList<>(pinned);
         themes.addAll(allThemes);
         List<Marketplace.Theme> filtered = Marketplace.filter(themes, search.getText().toString());
         adapter.setThemes(filtered);
-        String message = null;
+        String message = notice;
         if (loading) {
             message = "Loading themes";
         } else if (errorMessage != null) {
@@ -277,6 +329,60 @@ final class MarketplaceScreen {
         status.setVisibility(message == null ? View.GONE : View.VISIBLE);
         progress.setVisibility(loading ? View.VISIBLE : View.GONE);
         retry.setVisibility(!loading && (errorMessage != null || allThemes.isEmpty()) ? View.VISIBLE : View.GONE);
+    }
+
+    /**
+     * A preset applies, as the Theme section's buttons do. A theme downloads. An extension with an
+     * Android version opens its dialog, and any other extension opens its GitHub page.
+     */
+    private void openItem(Marketplace.Theme item) {
+        String preset = presets.get(item);
+        if (preset != null) {
+            ThemeSection.apply(context, ThemeState.Selection.preset(preset, item.title), null, this::applied);
+        } else if (item.kind == Marketplace.Kind.THEME) {
+            openTheme(item);
+        } else if (item.androidId != null) {
+            openExtension(item.androidId);
+        } else {
+            context.startActivity(new Intent(Intent.ACTION_VIEW, Uri.parse(item.repoUrl)));
+        }
+    }
+
+    /** Once a theme is applied: closes the Marketplace, and lets the settings screen recreate Spotify's activity. */
+    private void applied() {
+        dialog.dismiss();
+        onApplied.run();
+    }
+
+    /** What an Android extension does, its switch, and the controls it registered, if any. */
+    private void openExtension(String id) {
+        LinearLayout content = new LinearLayout(context);
+        content.setOrientation(LinearLayout.VERTICAL);
+        content.setPadding(dp(24), dp(8), dp(24), 0);
+        content.addView(SpicetifySettingsScreen.text(context, Extensions.description(id), false));
+        if (!InstalledPatches.extensions()) {
+            content.addView(SpicetifySettingsScreen.text(
+                    context, "Add the Spicetify extensions patch in Morphe Manager to use this.", false));
+        }
+        Switch toggle = new Switch(context);
+        toggle.setText(Extensions.title(id));
+        bindSwitch(toggle, id);
+        content.addView(toggle);
+        Extensions.Controls controls = Extensions.controls(id);
+        if (controls != null) content.addView(controls.create(context));
+        new AlertDialog.Builder(context).setTitle(Extensions.title(id)).setView(content)
+                .setPositiveButton("Done", null).show();
+    }
+
+    /** Shows whether extension {@code id} is on and turns it on or off. Without the extensions patch, it's disabled. */
+    private void bindSwitch(Switch toggle, String id) {
+        toggle.setOnCheckedChangeListener(null); // a reused row's switch still has its last extension's listener
+        toggle.setChecked(Extensions.isOn(context, id));
+        toggle.setEnabled(InstalledPatches.extensions());
+        toggle.setOnCheckedChangeListener((button, on) -> guarded(() -> {
+            Extensions.setOn(context, id, on);
+            adapter.notifyDataSetChanged(); // the row catches up with a change made in the dialog
+        }));
     }
 
     /** Downloads the tapped theme's color scheme and hands it to the chooser, one theme at a time. */
@@ -327,10 +433,7 @@ final class MarketplaceScreen {
             String warning = problem;
             return () -> {
                 if (warning != null) Toast.makeText(context, warning, Toast.LENGTH_LONG).show();
-                ThemeSection.chooseScheme(context, usable, "button", theme.title, background, () -> {
-                    dialog.dismiss();
-                    onApplied.run();
-                });
+                ThemeSection.chooseScheme(context, usable, "button", theme.title, background, this::applied);
             };
         } catch (FileNotFoundException e) {
             return () -> ThemeSection.error(context, theme.title + " has no color schemes to use on Android.");
@@ -384,7 +487,7 @@ final class MarketplaceScreen {
     private void guarded(Runnable action) {
         try {
             action.run();
-        } catch (RuntimeException e) {
+        } catch (Throwable e) {
             Log.w("Spicetify", "Marketplace action failed", e);
         }
     }
@@ -420,12 +523,27 @@ final class MarketplaceScreen {
         public View getView(int position, View convertView, ViewGroup parent) {
             Row row = convertView != null ? (Row) convertView.getTag() : new Row(context);
             Marketplace.Theme theme = themes.get(position);
-            String subtitle = theme.stars < 0 ? theme.author
-                    : theme.author + ", " + theme.stars + (theme.stars == 1 ? " star" : " stars");
+            boolean extension = theme.kind == Marketplace.Kind.EXTENSION;
+            String subtitle = (extension ? "Extension · " : "Theme · ") + theme.author
+                    + (theme.stars < 0 ? "" : ", " + theme.stars + (theme.stars == 1 ? " star" : " stars"))
+                    + (extension && theme.androidId == null ? " · Desktop only" : "");
             row.title.setText(theme.title);
             row.subtitle.setText(subtitle);
             row.description.setText(theme.description);
             previews.load(theme.previewUrl, row.image, rowWidthPx);
+            // A preset card shows a strip of its colors in place of the image.
+            String preset = presets.get(theme);
+            row.image.setVisibility(preset == null ? View.VISIBLE : View.GONE);
+            row.strip.setVisibility(preset == null ? View.GONE : View.VISIBLE);
+            if (preset != null) {
+                // A role the preset leaves out keeps Spotify's own color.
+                Map<String, Integer> roles = ThemeRuntime.roleColors(context, ThemeState.Selection.preset(preset, theme.title));
+                for (int i = 0; i < STRIP_ROLES.length; i++) {
+                    row.strip.getChildAt(i).setBackgroundColor(roles.getOrDefault(STRIP_ROLES[i], STOCK_STRIP[i]));
+                }
+            }
+            row.toggle.setVisibility(theme.androidId == null ? View.GONE : View.VISIBLE);
+            if (theme.androidId != null) bindSwitch(row.toggle, theme.androidId);
             return row.view;
         }
     }
@@ -434,7 +552,10 @@ final class MarketplaceScreen {
     private final class Row {
         final View view;
         final ImageView image;
+        /** A preset card's colors, shown in place of the image. */
+        final LinearLayout strip;
         final TextView title;
+        final Switch toggle;
         final TextView subtitle;
         final TextView description;
 
@@ -450,11 +571,23 @@ final class MarketplaceScreen {
             image.setBackgroundColor(Color.parseColor(PLACEHOLDER_COLOR));
             root.addView(image, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(180)));
 
+            strip = new LinearLayout(context);
+            for (int i = 0; i < STRIP_ROLES.length; i++) {
+                strip.addView(new View(context), new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.MATCH_PARENT, 1f));
+            }
+            root.addView(strip, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(24)));
+
+            LinearLayout heading = new LinearLayout(context);
+            heading.setGravity(Gravity.CENTER_VERTICAL);
             title = new TextView(context);
             title.setTextColor(Color.WHITE);
             title.setTextSize(16);
             title.setTypeface(null, Typeface.BOLD);
-            root.addView(title);
+            heading.addView(title, new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f));
+            toggle = new Switch(context);
+            toggle.setFocusable(false); // a focusable view in a row keeps the list from taking the row's taps
+            heading.addView(toggle);
+            root.addView(heading);
 
             subtitle = new TextView(context);
             subtitle.setTextColor(Color.rgb(179, 179, 179));
