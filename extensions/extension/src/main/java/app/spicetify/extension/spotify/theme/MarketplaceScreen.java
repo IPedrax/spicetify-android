@@ -3,6 +3,7 @@ package app.spicetify.extension.spotify.theme;
 import android.app.Dialog;
 import android.content.Context;
 import android.content.res.ColorStateList;
+import android.graphics.BitmapFactory;
 import android.graphics.Color;
 import android.graphics.Typeface;
 import android.text.Editable;
@@ -46,6 +47,11 @@ import java.util.concurrent.TimeUnit;
 final class MarketplaceScreen {
     private static final String BACKGROUND_COLOR = "#121212";
     private static final String PLACEHOLDER_COLOR = "#282828";
+    /**
+     * A theme's own image smaller than this on either side is a texture tile, like Spotify Dark's
+     * 70x70 ones, not a background; the real ones start at Galaxy's 1200x675.
+     */
+    private static final int MIN_BACKGROUND_PX = 480;
 
     private static final ExecutorService BACKGROUND = pool("Spicetify Marketplace", 1);
     private static final ExecutorService DOWNLOADS = pool("Spicetify theme download", 1);
@@ -340,8 +346,9 @@ final class MarketplaceScreen {
 
     /**
      * The image a theme shows on desktop: the first its include JS files name, in manifest order,
-     * then its user.css; null when none does. A file that fails to download names none, but an
-     * image that fails to download or decode throws.
+     * then its user.css; null when none does, or when it's a texture tile rather than a background.
+     * A file that fails to download names none, but an image that fails to download or decode, or
+     * isn't one Android can read, throws.
      */
     private byte[] ownImage(Marketplace.Theme theme) throws IOException {
         String url = null;
@@ -354,8 +361,13 @@ final class MarketplaceScreen {
             if (css != null) url = ThemeImages.fromCss(css, theme.usercssUrl);
         }
         if (url == null) return null;
-        if (!url.startsWith("data:")) return imageFetcher.get(url);
-        return Base64.decode(url.substring(url.indexOf(',') + 1), Base64.DEFAULT);
+        byte[] image = url.startsWith("data:")
+                ? Base64.decode(url.substring(url.indexOf(',') + 1), Base64.DEFAULT) : imageFetcher.get(url);
+        BitmapFactory.Options bounds = ThemeBackground.bounds(image);
+        if (bounds.outWidth >= MIN_BACKGROUND_PX && bounds.outHeight >= MIN_BACKGROUND_PX) return image;
+        Log.i("Spicetify", theme.title + "'s " + bounds.outWidth + "x" + bounds.outHeight
+                + " image is a texture tile, not a background");
+        return null;
     }
 
     /** A script or stylesheet to look for an image in, or null when it fails to download. */

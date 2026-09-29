@@ -26,6 +26,7 @@ import android.widget.TextView;
 import java.io.File;
 import java.io.FileNotFoundException;
 import java.io.IOException;
+import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.util.ArrayList;
 import java.util.Arrays;
@@ -41,6 +42,7 @@ import org.robolectric.RobolectricTestRunner;
 import org.robolectric.RuntimeEnvironment;
 import org.robolectric.Shadows;
 import org.robolectric.annotation.Config;
+import org.robolectric.annotation.GraphicsMode;
 import org.robolectric.shadows.ShadowAlertDialog;
 import org.robolectric.shadows.ShadowDialog;
 import org.robolectric.shadows.ShadowToast;
@@ -420,6 +422,7 @@ public class MarketplaceScreenTest {
     }
 
     @Test
+    @GraphicsMode(GraphicsMode.Mode.NATIVE) // Android's own decoder, which reads an image's real size
     public void aThemeBringsTheImageItsScriptNamesAndAThemeWithoutOneClearsIt() {
         putTwoThemes();
         responses.put(Marketplace.manifestUrl(REPO_A), "{\"name\":\"Aurora\",\"description\":\"A vivid theme\","
@@ -428,7 +431,7 @@ public class MarketplaceScreenTest {
         responses.put(Marketplace.resolve("color.ini", REPO_A, "main"), GALAXY_COLOR_INI);
         responses.put(Marketplace.resolve("color.ini", REPO_B, "main"), GALAXY_COLOR_INI);
         responses.put(Marketplace.resolve("u.css", REPO_B, "main"), ".Root__main-view { background-color: transparent; }");
-        byte[] png = ThemeBackgroundTest.png();
+        byte[] png = ThemeBackgroundTest.png(1200, 675); // Galaxy's size
         images = url -> {
             requested.add(url);
             return png;
@@ -450,18 +453,46 @@ public class MarketplaceScreenTest {
     }
 
     @Test
-    public void aThemeBringsAnImageItsCssHoldsAsADataUri() throws IOException {
+    @GraphicsMode(GraphicsMode.Mode.NATIVE) // Android's own decoder, which reads an image's real size
+    public void aDataUriImageIsSavedOnlyWhenItIsAtLeast480PxOnEachSide() throws IOException {
         putTwoThemes();
-        byte[] png = ThemeBackgroundTest.png();
+        byte[] png = ThemeBackgroundTest.png(480, 480);
         responses.put(Marketplace.resolve("color.ini", REPO_A, "main"), GALAXY_COLOR_INI);
-        responses.put(Marketplace.resolve("u.css", REPO_A, "main"), ".Root__top-container { background-image: "
-                + "url(\"data:image/png;base64," + Base64.encodeToString(png, Base64.NO_WRAP) + "\") !important; }");
+        responses.put(Marketplace.resolve("u.css", REPO_A, "main"),
+                "body { background: url(" + dataUri(ThemeBackgroundTest.png(480, 479)) + "); }");
+        responses.put(Marketplace.resolve("color.ini", REPO_B, "main"), GALAXY_COLOR_INI);
+        responses.put(Marketplace.resolve("u.css", REPO_B, "main"),
+                ".Root__top-container { background-image: url(\"" + dataUri(png) + "\") !important; }");
+        ListView list = find(showScreen().getWindow().getDecorView(), ListView.class);
+
+        tap(list, 1); // a pixel short on one side
+        idle();
+        assertFalse(ThemeBackground.hasImage(context));
+
+        tap(list, 2);
+        idle();
+        assertArrayEquals(png, Files.readAllBytes(new File(context.getFilesDir(), "spicetify_background").toPath()));
+    }
+
+    @Test
+    @GraphicsMode(GraphicsMode.Mode.NATIVE) // Android's own decoder, which reads an image's real size
+    public void aTextureTileOnTheWindowIsNoBackground() throws IOException {
+        putTwoThemes();
+        ThemeBackground.save(context, ThemeBackgroundTest.png(480, 480)); // from the theme before
+        responses.put(Marketplace.resolve("color.ini", REPO_A, "main"), GALAXY_COLOR_INI);
+        // Spotify Dark's shape: a 70x70 tile in a :root variable, repeated over the top container.
+        responses.put(Marketplace.resolve("u.css", REPO_A, "main"), ":root { --bgDarkness3: url('"
+                + dataUri(ThemeBackgroundTest.png(70, 70)) + "'); }\n.main-view-container, .Root__top-container "
+                + "{ background-image: var(--bgDarkness3)!important; background-repeat: repeat!important; }");
         ListView list = find(showScreen().getWindow().getDecorView(), ListView.class);
 
         tap(list, 1);
         idle();
 
-        assertArrayEquals(png, Files.readAllBytes(new File(context.getFilesDir(), "spicetify_background").toPath()));
+        // The theme applied without an image, and no toast said so.
+        assertFalse(ThemeBackground.hasImage(context));
+        assertEquals("This device couldn't apply the theme.", latestAlertMessage());
+        assertEquals("Loading Aurora", ShadowToast.getTextOfLatestToast());
     }
 
     @Test
@@ -483,5 +514,29 @@ public class MarketplaceScreenTest {
         // The theme still applied, without an image.
         assertFalse(ThemeBackground.hasImage(context));
         assertEquals("This device couldn't apply the theme.", latestAlertMessage());
+    }
+
+    @Test
+    @GraphicsMode(GraphicsMode.Mode.NATIVE) // Android's own decoder, which refuses what isn't an image
+    public void aThemesOwnImageAndroidCantReadIsLeftOutWithAToast() throws IOException {
+        putTwoThemes();
+        ThemeBackground.save(context, ThemeBackgroundTest.png(480, 480)); // from the theme before
+        responses.put(Marketplace.resolve("color.ini", REPO_A, "main"), GALAXY_COLOR_INI);
+        responses.put(Marketplace.resolve("u.css", REPO_A, "main"), ".Root { background: url(bg.jpg); }");
+        images = url -> "<html>Not Found</html>".getBytes(StandardCharsets.UTF_8);
+        ListView list = find(showScreen().getWindow().getDecorView(), ListView.class);
+
+        tap(list, 1);
+        idle();
+
+        assertEquals("Couldn't load Aurora's background image: Not an image Android can read",
+                ShadowToast.getTextOfLatestToast());
+        // The theme still applied without an image, instead of stopping at ThemeBackground.save.
+        assertFalse(ThemeBackground.hasImage(context));
+        assertEquals("This device couldn't apply the theme.", latestAlertMessage());
+    }
+
+    private static String dataUri(byte[] png) {
+        return "data:image/png;base64," + Base64.encodeToString(png, Base64.NO_WRAP);
     }
 }
