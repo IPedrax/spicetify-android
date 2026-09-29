@@ -2,6 +2,7 @@ package app.spicetify.extension.spotify.theme;
 
 import android.app.AlertDialog;
 import android.content.Context;
+import android.graphics.Color;
 import android.os.Handler;
 import android.os.Looper;
 import android.text.InputType;
@@ -11,6 +12,7 @@ import android.view.ViewGroup;
 import android.widget.Button;
 import android.widget.EditText;
 import android.widget.LinearLayout;
+import android.widget.Switch;
 import android.widget.Toast;
 import app.spicetify.extension.spotify.settings.SpicetifySettingsScreen;
 import java.util.List;
@@ -48,6 +50,19 @@ public final class ThemeSection {
         }
         addButton(section, "Spicetify Marketplace", () -> MarketplaceScreen.open(context, onApplied));
         addButton(section, "Paste a Spicetify theme", () -> paste(context, onApplied));
+        if (ThemeBackground.hasImage(context)) {
+            Switch blur = new Switch(context);
+            blur.setText("Blur background image");
+            blur.setTextColor(Color.WHITE);
+            blur.setChecked(ThemeBackground.blurEnabled(context));
+            blur.setOnCheckedChangeListener((button, enabled) -> {
+                ThemeBackground.setBlur(context, enabled);
+                // Recreating the activity draws the background again with the new choice.
+                onApplied.run();
+            });
+            section.addView(blur, new LinearLayout.LayoutParams(
+                    ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
+        }
         section.addView(SpicetifySettingsScreen.text(
                 context, "Some colors change after Spotify restarts.", false));
         return section;
