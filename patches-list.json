@@ -1,6 +1,6 @@
 {
   "NOTE": "Do NOT manually edit this file. This file is automatically updated when semantic release (release.yml) runs. Manually editing this file can break your releases and break third party tools that use this file.",
-  "version": "1.0.0-dev.4",
+  "version": "1.0.0-dev.1",
   "patches": [
     {
       "name": "Clean sharing links",
@@ -98,10 +98,12 @@
     },
     {
       "name": "Theme colors",
-      "description": "Changes selected background and accent color resources; defaults to AMOLED black. Some screens, hardcoded colors, and animations retain Spotify's colors.",
+      "description": "Adds a theme picker to Spicetify settings: presets, Material You and Spicetify themes. Requires Android 14 or later. Some hardcoded colors and animations keep Spotify's look.",
       "default": false,
       "category": null,
       "dependencies": [
+        "BytecodePatch",
+        "ResourcePatch",
         "BytecodePatch"
       ],
       "compatiblePackages": [
@@ -125,35 +127,7 @@
           ]
         }
       ],
-      "options": [
-        {
-          "key": "backgroundColor",
-          "title": "Primary background color",
-          "description": "Background color in #RRGGBB or #AARRGGBB format.",
-          "required": true,
-          "type": "kotlin.String",
-          "default": "#FF000000",
-          "values": null
-        },
-        {
-          "key": "accentColor",
-          "title": "Accent color",
-          "description": "Accent color in #RRGGBB or #AARRGGBB format.",
-          "required": true,
-          "type": "kotlin.String",
-          "default": "#FF1ED760",
-          "values": null
-        },
-        {
-          "key": "pressedAccentColor",
-          "title": "Pressed accent color",
-          "description": "Pressed accent color in #RRGGBB or #AARRGGBB format.",
-          "required": true,
-          "type": "kotlin.String",
-          "default": "#FF1ABC54",
-          "values": null
-        }
-      ]
+      "options": []
     }
   ]
 }
