@@ -60,7 +60,11 @@ public final class Extensions {
         View create(Context context);
     }
 
-    /** Something an extension does on request, from a menu item or a button in its controls. */
+    /**
+     * Something an extension does on request, from a menu item or a button in its controls. It runs
+     * on the main thread (the menu click), so an action that waits on the bridge or the network must
+     * return at once and do its work on the bridge thread.
+     */
     interface Action {
         void run(Context context);
     }
