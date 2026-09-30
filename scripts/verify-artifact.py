@@ -16,7 +16,8 @@ def mapped_colors(path=ROLE_MAP):
     for line in path.read_text().splitlines():
         line = line.strip()
         if line and not line.startswith("#") and "=" in line:
-            names += [name.strip() for name in line.split("=", 1)[1].split(",") if name.strip()]
+            # A trailing * marks a Compose color that turns see-through; ThemeResources.kt drops it too.
+            names += [name.strip().removesuffix("*") for name in line.split("=", 1)[1].split(",") if name.strip()]
     return names
 
 
