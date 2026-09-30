@@ -2,12 +2,14 @@ package app.spicetify.extension.spotify.settings;
 
 import android.app.Activity;
 import android.app.AlertDialog;
+import android.content.SharedPreferences;
 import android.os.Looper;
 import android.view.View;
 import android.view.ViewGroup;
 import android.widget.Button;
 import android.widget.EditText;
 import android.widget.ListView;
+import android.widget.Switch;
 import android.widget.TextView;
 import app.spicetify.extension.spotify.extensions.LibraryTest;
 import app.spicetify.extension.spotify.extensions.PlayerBridgeTest;
@@ -29,6 +31,7 @@ import org.robolectric.annotation.Implementation;
 import org.robolectric.annotation.Implements;
 import org.robolectric.shadows.ShadowAlertDialog;
 import org.robolectric.shadows.ShadowDialog;
+import org.robolectric.shadows.ShadowLog;
 import org.robolectric.shadows.ShadowToast;
 import static org.junit.Assert.*;
 
@@ -44,6 +47,14 @@ public class HomePinsSettingsTest {
     @Implements(value = InstalledPatches.class, isInAndroidSdk = false)
     public static class Capabilities {
         @Implementation public static boolean homePins() { return true; }
+    }
+
+    /** HomePins failing to save the switch, as it does before Spotify's start initializes it. */
+    @Implements(value = HomePins.class, isInAndroidSdk = false)
+    public static class UnsavedOnlyPins {
+        @Implementation public static void setOnlyPins(boolean only) {
+            throw new IllegalStateException("Home pins are not initialized.");
+        }
     }
 
     @Before public void initialize() {
@@ -205,6 +216,41 @@ public class HomePinsSettingsTest {
         assertTrue(pinned().isEmpty());
     }
 
+    @Test public void showOnlyMyPinsSitsUnderThePickerButtonAndIsSavedForHomeToReadAtStart() {
+        View page = page();
+        Switch only = onlyPins(page);
+        ViewGroup section = (ViewGroup) only.getParent();
+        int at = section.indexOfChild(only);
+        assertSame("under the picker button", choose(page), section.getChildAt(at - 1));
+        assertEquals("Hide Spotify's other shortcuts on Home. Restart Spotify to apply.",
+                ((TextView) section.getChildAt(at + 1)).getText().toString());
+        assertFalse("off by default", only.isChecked());
+
+        only.setChecked(true);
+
+        assertTrue("saved", stored().getBoolean("only_pins", false));
+        HomePins.initialize(RuntimeEnvironment.getApplication()); // Spotify's next start
+        Switch again = onlyPins(page());
+        assertTrue("still on after a restart", again.isChecked());
+        again.setChecked(false);
+        assertFalse("saved off", stored().getBoolean("only_pins", true));
+        stored().edit().putBoolean("only_pins", true).commit();
+        HomePins.initialize(RuntimeEnvironment.getApplication());
+        assertTrue("Home reads the saved choice at start", HomePins.onlyPins());
+        assertTrue(onlyPins(page()).isChecked());
+    }
+
+    @Test @Config(shadows = {Capabilities.class, UnsavedOnlyPins.class})
+    public void aShowOnlyMyPinsSwitchThatCantSaveIsLoggedInsteadOfThrowingIntoSpotify() {
+        Switch only = onlyPins(page());
+
+        only.setChecked(true); // would throw into Spotify's switch handling without the guard
+
+        assertTrue("the failure is logged", ShadowLog.getLogsForTag("Spicetify").stream().anyMatch(log ->
+                log.throwable instanceof IllegalStateException
+                        && "Home pins are not initialized.".equals(log.throwable.getMessage())));
+    }
+
     /** Opens the picker over Home's tiles Alpha, Bravo and Charlie, with no library, once {@code pins} are pinned. */
     private View openWithoutTheLibrary(String... pins) throws Exception {
         PlayerBridgeTest.attachRouter(true);
@@ -228,11 +274,27 @@ public class HomePinsSettingsTest {
 
     /** Opens Spicetify settings, taps "Choose pinned shortcuts", and returns the picker's views. */
     private View openPicker() {
+        choose(page()).performClick();
+        return ShadowAlertDialog.getLatestAlertDialog().getWindow().getDecorView();
+    }
+
+    /** Opens Spicetify settings and returns its window's views. */
+    private static View page() {
         Activity activity = Robolectric.buildActivity(Activity.class).setup().get();
         SpicetifySettingsScreen.open(activity);
         Shadows.shadowOf(Looper.getMainLooper()).idle();
-        choose(ShadowDialog.getLatestDialog().getWindow().getDecorView()).performClick();
-        return ShadowAlertDialog.getLatestAlertDialog().getWindow().getDecorView();
+        return ShadowDialog.getLatestDialog().getWindow().getDecorView();
+    }
+
+    private static Switch onlyPins(View page) {
+        TextView found = labeled(page, "Show only my pins");
+        assertTrue("the page has no Show only my pins switch", found instanceof Switch);
+        return (Switch) found;
+    }
+
+    /** Where HomePins keeps the pins and the switch. */
+    private static SharedPreferences stored() {
+        return RuntimeEnvironment.getApplication().getSharedPreferences("spicetify_home_pins", 0);
     }
 
     /** Home's tiles, as its shortcut model hands them to HomePins. */

@@ -41,6 +41,7 @@ import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
+import java.util.function.Consumer;
 
 /**
  * Spicetify settings, shown as a full-screen dialog over Spotify's current activity.
@@ -151,20 +152,8 @@ public final class SpicetifySettingsScreen {
         }
 
         if (sharingInstalled) {
-            Switch cleanSharing = new Switch(context);
-            cleanSharing.setText("Clean sharing links");
-            cleanSharing.setTextSize(18);
-            cleanSharing.setTextColor(Color.WHITE);
-            cleanSharing.setMinHeight(dp(56));
-            cleanSharing.setSwitchPadding(dp(24));
-            cleanSharing.setThumbTintList(new ColorStateList(
-                    new int[][] {new int[] {android.R.attr.state_checked}, new int[0]},
-                    new int[] {Color.rgb(30, 215, 96), Color.LTGRAY}));
-            cleanSharing.setChecked(PatchSettings.cleanSharingEnabled());
-            cleanSharing.setOnCheckedChangeListener((button, enabled) ->
-                    guarded(() -> PatchSettings.setCleanSharingEnabled(enabled)));
-            content.addView(cleanSharing, new LinearLayout.LayoutParams(
-                    ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
+            addSwitch(content, "Clean sharing links", PatchSettings.cleanSharingEnabled(),
+                    PatchSettings::setCleanSharingEnabled);
             content.addView(text(context, "Remove tracking parameters from Spotify links you share. "
                     + "Timestamps and playback context are preserved. Changes apply immediately.", false));
         }
@@ -177,6 +166,8 @@ public final class SpicetifySettingsScreen {
             choose.setText("Choose pinned shortcuts");
             choose.setOnClickListener(view -> guarded(this::chooseHomePins));
             content.addView(choose);
+            addSwitch(content, "Show only my pins", HomePins.onlyPins(), HomePins::setOnlyPins);
+            content.addView(text(context, "Hide Spotify's other shortcuts on Home. Restart Spotify to apply.", false));
         }
 
         if (InstalledPatches.serverFiles()) {
@@ -342,6 +333,23 @@ public final class SpicetifySettingsScreen {
         row.getContext().getTheme().resolveAttribute(android.R.attr.selectableItemBackground, ripple, true);
         row.setBackgroundResource(ripple.resourceId);
         row.setOnClickListener(view -> guarded(action));
+    }
+
+    /** Adds a switch in this page's style to {@code content}. A change runs {@code change}, guarded. */
+    private void addSwitch(LinearLayout content, String label, boolean checked, Consumer<Boolean> change) {
+        Switch toggle = new Switch(context);
+        toggle.setText(label);
+        toggle.setTextSize(18);
+        toggle.setTextColor(Color.WHITE);
+        toggle.setMinHeight(dp(56));
+        toggle.setSwitchPadding(dp(24));
+        toggle.setThumbTintList(new ColorStateList(
+                new int[][] {new int[] {android.R.attr.state_checked}, new int[0]},
+                new int[] {Color.rgb(30, 215, 96), Color.LTGRAY}));
+        toggle.setChecked(checked);
+        toggle.setOnCheckedChangeListener((button, on) -> guarded(() -> change.accept(on)));
+        content.addView(toggle, new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
     }
 
     /** Runs a tap or a switch's change, logging a failure instead of letting it reach Spotify. */
