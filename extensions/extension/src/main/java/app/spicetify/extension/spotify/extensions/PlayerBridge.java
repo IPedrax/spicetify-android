@@ -3,6 +3,7 @@ package app.spicetify.extension.spotify.extensions;
 import android.annotation.SuppressLint;
 import android.content.Context;
 import android.util.Log;
+import app.spicetify.extension.spotify.settings.InstalledPatches;
 import java.io.IOException;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
@@ -77,13 +78,24 @@ public final class PlayerBridge {
 
     /**
      * Hook H1, at the end of {@code SharedCosmosRouterService.<init>}: attaches Spotify's router,
-     * then starts the extensions that are on. Never throws into Spotify.
+     * then, with the extensions patch installed, starts the extensions that are on. Never throws
+     * into Spotify.
      */
     public static void onCosmos(Object service) {
+        onCosmos(service, InstalledPatches.extensions());
+    }
+
+    /**
+     * Without the extensions patch, H1 came with Home pins alone, whose picker reads Your Library
+     * through the bridge. Then no extension starts: one left on from an earlier install couldn't be
+     * turned off, since the Marketplace disables its switch without the patch.
+     */
+    static void onCosmos(Object service, boolean extensionsInstalled) {
         try {
             Context application = application(service);
             if (application != null) Extensions.setAppContext(application);
             attach(CosmosRouter.reflective(service));
+            if (!extensionsInstalled) return;
             Context context = Extensions.appContext();
             if (context == null) {
                 Log.w("Spicetify", "No application context to start the extensions with");

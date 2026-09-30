@@ -7,6 +7,8 @@ import android.content.Context;
 import android.content.res.ColorStateList;
 import android.graphics.Color;
 import android.graphics.Typeface;
+import android.text.Editable;
+import android.text.TextWatcher;
 import android.util.Log;
 import android.util.TypedValue;
 import android.view.ContextThemeWrapper;
@@ -14,21 +16,30 @@ import android.view.Gravity;
 import android.view.View;
 import android.view.ViewGroup;
 import android.view.WindowManager;
+import android.widget.ArrayAdapter;
 import android.widget.Button;
+import android.widget.EditText;
 import android.widget.ImageButton;
 import android.widget.LinearLayout;
+import android.widget.ListView;
 import android.widget.ScrollView;
 import android.widget.Switch;
 import android.widget.TextView;
 import android.widget.Toast;
 import app.spicetify.extension.spotify.extensions.Extensions;
+import app.spicetify.extension.spotify.extensions.Library;
 import app.spicetify.extension.spotify.extensions.PlayerBridge;
 import app.spicetify.extension.spotify.home.HomePins;
 import app.spicetify.extension.spotify.theme.MarketplaceScreen;
 import app.spicetify.extension.spotify.theme.ThemeRuntime;
 import app.spicetify.extension.spotify.theme.ThemeSection;
 import java.util.ArrayList;
+import java.util.HashMap;
+import java.util.HashSet;
 import java.util.List;
+import java.util.Locale;
+import java.util.Map;
+import java.util.Set;
 
 /**
  * Spicetify settings, shown as a full-screen dialog over Spotify's current activity.
@@ -40,6 +51,7 @@ import java.util.List;
  */
 public final class SpicetifySettingsScreen {
     static final String CLOSE_TAG = "spicetify_settings_close";
+    private static final String LIBRARY_UNAVAILABLE = "Your library isn't available yet";
     private static final int BACKGROUND = Color.rgb(18, 18, 18);
 
     private final Context context;
@@ -159,7 +171,7 @@ public final class SpicetifySettingsScreen {
         if (InstalledPatches.homePins()) {
             content.addView(text(context, "Home shortcuts", true));
             content.addView(text(context, "Choose which shortcuts appear first when Spotify includes them on Home. "
-                    + "Return to Home once to load the choices. Restart Spotify after changing pins.", false));
+                    + "Restart Spotify after changing pins.", false));
             Button choose = new Button(context);
             choose.setText("Choose pinned shortcuts");
             choose.setOnClickListener(view -> guarded(this::chooseHomePins));
@@ -207,33 +219,72 @@ public final class SpicetifySettingsScreen {
         }
     }
 
+    /**
+     * The Home shortcuts picker: a search field over one checkable list of the pins, Home's tiles and
+     * the library, which HomePins orders. It opens with the pins and Home's tiles, and the library
+     * joins them once the bridge reads it. Checks are kept by uri, so a search never loses one.
+     */
     private void chooseHomePins() {
-        List<HomePins.Choice> choices = HomePins.choices();
-        if (choices.isEmpty()) {
-            new AlertDialog.Builder(context).setTitle("No Home shortcuts loaded")
-                    .setMessage("Return to Home and let its shortcuts load, then open this menu again.")
-                    .setPositiveButton("OK", null).show();
-            return;
-        }
-        String[] labels = new String[choices.size()];
-        boolean[] selected = new boolean[choices.size()];
-        for (int i = 0; i < choices.size(); i++) {
-            HomePins.Choice choice = choices.get(i);
-            boolean duplicate = false;
-            for (HomePins.Choice other : choices) {
-                if (!other.id.equals(choice.id) && other.label.equals(choice.label)) duplicate = true;
+        List<HomePins.Choice> choices = new ArrayList<>(HomePins.choices());
+        Set<String> checked = new HashSet<>();
+        for (HomePins.Choice choice : choices) if (choice.pinned) checked.add(choice.id);
+        List<HomePins.Choice> shown = new ArrayList<>();
+        EditText search = new EditText(context);
+        search.setHint("Search");
+        search.setSingleLine(true);
+        TextView note = text(context, "Loading your library", false);
+        ListView list = new ListView(context);
+        list.setChoiceMode(ListView.CHOICE_MODE_MULTIPLE);
+        ArrayAdapter<String> rows = new ArrayAdapter<>(context, android.R.layout.simple_list_item_multiple_choice);
+        list.setAdapter(rows);
+        Runnable show = () -> {
+            // A name that two choices share shows each one's uri too, so they can be told apart.
+            Map<String, Integer> named = new HashMap<>();
+            for (HomePins.Choice choice : choices) named.merge(choice.label, 1, Integer::sum);
+            String query = search.getText().toString().trim().toLowerCase(Locale.ROOT);
+            shown.clear();
+            List<String> texts = new ArrayList<>();
+            for (HomePins.Choice choice : choices) {
+                if (!choice.label.toLowerCase(Locale.ROOT).contains(query)) continue;
+                shown.add(choice);
+                texts.add(named.get(choice.label) > 1 ? choice.label + "\n" + choice.id : choice.label);
             }
-            labels[i] = duplicate ? choice.label + "\n" + choice.id : choice.label;
-            selected[i] = choice.pinned;
-        }
-        AlertDialog picker = new AlertDialog.Builder(context).setTitle("Pinned Home shortcuts")
-                .setMultiChoiceItems(labels, selected, (dialog, index, checked) -> selected[index] = checked)
+            rows.clear();
+            rows.addAll(texts);
+            list.clearChoices();
+            for (int i = 0; i < shown.size(); i++) list.setItemChecked(i, checked.contains(shown.get(i).id));
+        };
+        show.run();
+        list.setOnItemClickListener((parent, row, position, id) -> guarded(() -> {
+            if (list.isItemChecked(position)) checked.add(shown.get(position).id);
+            else checked.remove(shown.get(position).id);
+        }));
+        search.addTextChangedListener(new TextWatcher() {
+            @Override
+            public void beforeTextChanged(CharSequence text, int start, int count, int after) {}
+
+            @Override
+            public void onTextChanged(CharSequence text, int start, int before, int count) {}
+
+            @Override
+            public void afterTextChanged(Editable text) {
+                guarded(show);
+            }
+        });
+        LinearLayout layout = new LinearLayout(context);
+        layout.setOrientation(LinearLayout.VERTICAL);
+        layout.setPadding(dp(24), dp(8), dp(24), 0);
+        layout.addView(search);
+        layout.addView(note);
+        layout.addView(list);
+
+        AlertDialog picker = new AlertDialog.Builder(context).setTitle("Pinned Home shortcuts").setView(layout)
                 .setNegativeButton("Cancel", null)
                 .setPositiveButton("Save", null).create();
         picker.setOnShowListener(ignored -> picker.getButton(AlertDialog.BUTTON_POSITIVE)
                 .setOnClickListener(button -> guarded(() -> {
                     List<String> ids = new ArrayList<>();
-                    for (int i = 0; i < choices.size(); i++) if (selected[i]) ids.add(choices.get(i).id);
+                    for (HomePins.Choice choice : choices) if (checked.contains(choice.id)) ids.add(choice.id);
                     try {
                         HomePins.setPinned(ids);
                     } catch (IllegalArgumentException changedSelection) {
@@ -244,7 +295,22 @@ public final class SpicetifySettingsScreen {
                     new AlertDialog.Builder(context).setMessage("Pins saved. Restart Spotify to refresh Home.")
                             .setPositiveButton("OK", null).show();
                 })));
+        picker.getWindow().setSoftInputMode(WindowManager.LayoutParams.SOFT_INPUT_ADJUST_RESIZE);
         picker.show();
+        Library.fetch(context, new Library.Callback() {
+            @Override
+            public void loaded(List<Library.Item> items) {
+                choices.clear();
+                choices.addAll(HomePins.choices(items));
+                note.setVisibility(View.GONE);
+                show.run();
+            }
+
+            @Override
+            public void failed(String reason) {
+                note.setText(LIBRARY_UNAVAILABLE);
+            }
+        });
     }
 
     public static TextView text(Context context, String value, boolean heading) {

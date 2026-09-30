@@ -3,8 +3,14 @@ package app.spicetify.extension.spotify.home;
 import static org.junit.Assert.*;
 
 import android.app.Application;
+import android.content.SharedPreferences;
+import app.spicetify.extension.spotify.extensions.Library;
+import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collections;
+import java.util.List;
+import org.json.JSONArray;
+import org.json.JSONObject;
 import org.junit.Before;
 import org.junit.Test;
 import org.junit.runner.RunWith;
@@ -18,6 +24,7 @@ public class HomePinsTest {
     private static final String A = "spotify:playlist:a";
     private static final String B = "spotify:playlist:b";
     private static final String C = "spotify:album:c";
+    private static final String LIKED_SONGS_IMAGE = "https://misc.scdn.co/liked-songs/liked-songs-300.png";
     private Application application;
 
     @Before public void initialize() {
@@ -100,5 +107,99 @@ public class HomePinsTest {
         HomePins.initialize(application);
         assertArrayEquals(new int[]{0}, HomePins.captureAndOrder(new String[]{A}, new String[]{"A"}));
         assertFalse(HomePins.choices().get(0).pinned);
+    }
+
+    @Test public void thePickerListsPinsInPinOrderThenHomeThenPlaylistsThenAlbumsEachAlphabetically() {
+        List<Library.Item> library = Arrays.asList(
+                new Library.Item("spotify:collection:tracks", "Liked Songs", LIKED_SONGS_IMAGE, false),
+                new Library.Item("spotify:playlist:zulu", "Zulu", "spotify:image:z", false),
+                new Library.Item("spotify:album:beta", "Beta", "spotify:image:b", true),
+                new Library.Item("spotify:playlist:road", "Road trip", "spotify:image:r", false),
+                new Library.Item("spotify:playlist:alpha", "alpha", null, false),
+                new Library.Item("spotify:album:aardvark", "Aardvark", null, true));
+        HomePins.choices(library);
+        HomePins.setPinned(Arrays.asList("spotify:playlist:zulu", "spotify:album:beta"));
+        HomePins.captureAndOrder(new String[]{"spotify:playlist:mixb", "spotify:playlist:road", "spotify:playlist:mixa"},
+                new String[]{"Mix B", "Road trip", "mix a"});
+
+        List<HomePins.Choice> choices = HomePins.choices(library);
+
+        // Road trip is on Home and in the library, and shows once, with Home's tiles.
+        assertEquals(Arrays.asList("Zulu", "Beta", "mix a", "Mix B", "Road trip", "alpha", "Liked Songs", "Aardvark"),
+                labels(choices));
+        assertEquals(Arrays.asList(true, true, false, false, false, false, false, false), pinned(choices));
+        // Before the library comes, the pins and Home's tiles alone.
+        assertEquals(Arrays.asList("Zulu", "Beta", "mix a", "Mix B", "Road trip"), labels(HomePins.choices()));
+    }
+
+    @Test public void pinsSavedBeforeCoversWereKeptStillLoad() {
+        application.getSharedPreferences("spicetify_home_pins", 0).edit().putString("pins",
+                "[{\"id\":\"" + A + "\",\"label\":\"Old A\"},{\"id\":\"" + B + "\",\"label\":\"Old B\"}]").commit();
+
+        HomePins.initialize(application);
+
+        List<HomePins.Choice> choices = HomePins.choices();
+        assertEquals(Arrays.asList("Old A", "Old B"), labels(choices));
+        assertEquals(Arrays.asList(true, true), pinned(choices));
+        assertArrayEquals("they still come first on Home", new int[]{1, 2, 0},
+                HomePins.captureAndOrder(new String[]{C, A, B}, new String[]{"C", "A", "B"}));
+    }
+
+    @Test public void openingThePickerRefreshesTheTitlesAndCoversOfPinsInTheLibrary() throws Exception {
+        application.getSharedPreferences("spicetify_home_pins", 0).edit().putString("pins",
+                "[{\"id\":\"" + A + "\",\"label\":\"Old A\"},{\"uri\":\"" + B
+                        + "\",\"title\":\"B\",\"image\":\"spotify:image:b\"}]").commit();
+        HomePins.initialize(application);
+
+        List<HomePins.Choice> choices = HomePins.choices(Collections.singletonList(
+                new Library.Item(A, "New A", "spotify:image:new", false)));
+
+        assertEquals(Arrays.asList("New A", "B"), labels(choices));
+        JSONArray saved = saved();
+        assertEquals(2, saved.length());
+        assertPin(saved.getJSONObject(0), A, "New A", "spotify:image:new");
+        assertPin(saved.getJSONObject(1), B, "B", "spotify:image:b"); // not in the library, so left alone
+        HomePins.initialize(application);
+        assertEquals(Arrays.asList("New A", "B"), labels(HomePins.choices()));
+    }
+
+    @Test public void pinsAreSavedWithTheTitleAndCoverTheyWereOfferedWith() throws Exception {
+        HomePins.captureAndOrder(new String[]{B, C}, new String[]{"Home tile", "Chill on Home"});
+        HomePins.choices(Arrays.asList(new Library.Item(A, "Road trip", "spotify:image:r", false),
+                new Library.Item(C, "Chill", "spotify:image:c", true)));
+
+        HomePins.setPinned(Arrays.asList(A, B, C));
+
+        JSONArray saved = saved();
+        assertEquals(3, saved.length());
+        assertPin(saved.getJSONObject(0), A, "Road trip", "spotify:image:r");
+        assertPin(saved.getJSONObject(1), B, "Home tile", null);
+        // A Home tile that's also saved takes Home's title and the library's cover.
+        assertPin(saved.getJSONObject(2), C, "Chill on Home", "spotify:image:c");
+    }
+
+    private JSONArray saved() throws Exception {
+        SharedPreferences preferences = application.getSharedPreferences("spicetify_home_pins", 0);
+        return new JSONArray(preferences.getString("pins", "[]"));
+    }
+
+    private static void assertPin(JSONObject pin, String uri, String title, String image) throws Exception {
+        assertEquals(uri, pin.getString("uri"));
+        assertEquals(title, pin.getString("title"));
+        if (image == null) assertFalse(pin.toString(), pin.has("image"));
+        else assertEquals(image, pin.getString("image"));
+        assertFalse("the old keys are gone: " + pin, pin.has("id") || pin.has("label"));
+    }
+
+    private static List<String> labels(List<HomePins.Choice> choices) {
+        List<String> labels = new ArrayList<>();
+        for (HomePins.Choice choice : choices) labels.add(choice.label);
+        return labels;
+    }
+
+    private static List<Boolean> pinned(List<HomePins.Choice> choices) {
+        List<Boolean> pinned = new ArrayList<>();
+        for (HomePins.Choice choice : choices) pinned.add(choice.pinned);
+        return pinned;
     }
 }

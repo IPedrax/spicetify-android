@@ -525,13 +525,30 @@ public class PlayerBridgeTest {
         Extensions.setAppContext(null);
         FakeService service = new FakeService();
 
-        PlayerBridge.onCosmos(service);
+        PlayerBridge.onCosmos(service, true);
 
         assertSame("found through the router's class loader", context, Extensions.appContext());
         assertTrue(PlayerBridge.connected());
         assertTrue("an extension that is on starts with Spotify", started.await(5, TimeUnit.SECONDS));
         PlayerBridge.call(Esperanto.CONTEXT_PLAYER, "SkipNext", new byte[0], new Answer());
         assertEquals(SKIP_NEXT, service.router.request.getUri());
+    }
+
+    @Test
+    public void withoutTheExtensionsPatchOnCosmosConnectsTheBridgeButStartsNoExtension() throws Exception {
+        AtomicBoolean started = new AtomicBoolean();
+        Extensions.onSwitch("test_left_on", (switchContext, on) -> started.set(true));
+        context.getSharedPreferences("spicetify_extensions", Context.MODE_PRIVATE).edit()
+                .putBoolean("test_left_on", true).commit(); // switched on before the extensions patch was left out
+        FakeService service = new FakeService();
+
+        PlayerBridge.onCosmos(service); // Home pins alone: InstalledPatches.extensions() is false, as in every test
+        RandomSongTest.onBridge(() -> null); // runs after anything onCosmos posted
+
+        assertTrue(PlayerBridge.connected());
+        assertFalse("nothing starts without the extensions patch", started.get());
+        PlayerBridge.call(Esperanto.YOUR_LIBRARY, "All", Esperanto.yourLibraryAll(), new Answer());
+        assertEquals("sp://esperanto/" + Esperanto.YOUR_LIBRARY + "/All", service.router.request.getUri());
     }
 
     @Test

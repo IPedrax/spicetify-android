@@ -287,7 +287,8 @@ final class Esperanto {
     // Filter    0 ALBUM, 1 ARTIST, 2 PLAYLIST, 3 SHOW, 4 BOOK, 100 DOWNLOADED, 101 WRITABLE, 102 BY_YOU
     // Response  1 header{9 remaining_entities, 12 is_loading, 17 total_count}, 2 entity*, 3 pinned_entity*,
     //           98 status_code (200 = OK), 99 error
-    // Entity    1 entity_info{2 name, 3 uri}; case 2 album, 3 artist, 4 playlist (Liked Songs too), 6 folder
+    // Entity    1 entity_info{2 name, 3 uri, 6 image_uri}; case 2 album, 3 artist, 4 playlist (Liked Songs too),
+    //           6 folder
     // Playlist  12 number_of_items_per_link_type*{1 link_type (4 TRACK, 63 EPISODE), 2 num_items}
     // Folder    2 number_of_playlists, 3 number_of_folders; folder uri spotify:user:<u>:folder:<16 hex> = folder_id
 
@@ -397,9 +398,18 @@ final class Esperanto {
         }
     }
 
-    /** Where a random song from the library can come from: Liked Songs, a playlist or a saved album. */
+    /**
+     * Where a random song from the library can come from: Liked Songs, a playlist or a saved album.
+     * The Home shortcuts picker lists them too, by name and cover.
+     */
     static final class LibrarySource {
         String uri;
+        /**
+         * Its name and cover in Your Library, or null without one. The cover is as the core gives it,
+         * such as {@code spotify:image:<id>}.
+         */
+        String name;
+        String image;
         boolean album;
         /** A playlist's song count from Your Library, or -1 without one, as for albums and Liked Songs. */
         int trackCount = -1;
@@ -469,7 +479,7 @@ final class Esperanto {
         while (entity.next()) {
             switch (entity.field()) {
                 case 1:
-                    source.uri = readEntityUri(entity.message());
+                    readEntityInfo(entity.message(), source);
                     break;
                 case ENTITY_ALBUM:
                     kind = ENTITY_ALBUM;
@@ -488,16 +498,22 @@ final class Esperanto {
         found.putIfAbsent(source.uri, source);
     }
 
-    private static String readEntityUri(Wire.Reader entityInfo) throws IOException {
-        String uri = null;
+    private static void readEntityInfo(Wire.Reader entityInfo, LibrarySource source) throws IOException {
         while (entityInfo.next()) {
-            if (entityInfo.field() == 3) {
-                uri = entityInfo.string();
-            } else {
-                entityInfo.skip();
+            switch (entityInfo.field()) {
+                case 2:
+                    source.name = entityInfo.string();
+                    break;
+                case 3:
+                    source.uri = entityInfo.string();
+                    break;
+                case 6:
+                    source.image = entityInfo.string();
+                    break;
+                default:
+                    entityInfo.skip();
             }
         }
-        return uri;
     }
 
     /** The TRACK entry of {@code number_of_items_per_link_type}, or -1 when there's none. */
