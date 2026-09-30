@@ -223,6 +223,17 @@ final class WebApi {
         });
     }
 
+    /** Runs {@code task} on the Web API thread, after everything queued there before it. A task that throws is logged. */
+    static void run(Runnable task) {
+        NETWORK.execute(() -> {
+            try {
+                task.run();
+            } catch (Throwable e) {
+                Log.w("Spicetify", "A Web API task failed", e);
+            }
+        });
+    }
+
     /** On the Web API thread: runs the GET, and returns what the bridge thread does with its outcome. */
     private static Runnable answer(Http http, String url, String token, PlayerBridge.Result result) {
         try {

@@ -284,7 +284,7 @@ public class WebApiTest {
     }
 
     /** A clock the test moves by hand; a sleep moves it on at once. */
-    private static final class FakeClock implements WebApi.Clock {
+    static final class FakeClock implements WebApi.Clock {
         /** Anywhere: the real clock counts from an arbitrary origin. */
         long now = 5000;
         final List<Long> sleeps = new ArrayList<>();
