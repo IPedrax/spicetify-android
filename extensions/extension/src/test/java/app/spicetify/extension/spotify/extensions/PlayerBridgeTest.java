@@ -17,6 +17,7 @@ import com.spotify.cosmos.cosmos.Response;
 import java.io.File;
 import java.nio.file.Files;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Set;
@@ -40,10 +41,12 @@ import org.robolectric.annotation.Config;
 public class PlayerBridgeTest {
     private static final String SKIP_NEXT = "sp://esperanto/spotify.player.esperanto.proto.ContextPlayer/SkipNext";
     private static final String GET_STATE = "sp://esperanto/spotify.player.esperanto.proto.ContextPlayer/GetState";
+    private static final String GET_ERROR = "sp://esperanto/spotify.player.esperanto.proto.ContextPlayer/GetError";
 
     private final Context context = RuntimeEnvironment.getApplication();
     private final FakeRouter router = new FakeRouter();
     private final List<PlayerBridge.StateListener> listeners = new ArrayList<>();
+    private final List<PlayerBridge.ErrorListener> errorListeners = new ArrayList<>();
 
     @Before
     public void attachAFakeRouter() {
@@ -55,6 +58,7 @@ public class PlayerBridgeTest {
     @After
     public void removeListeners() {
         for (PlayerBridge.StateListener listener : listeners) PlayerBridge.removeStateListener(listener);
+        for (PlayerBridge.ErrorListener listener : errorListeners) PlayerBridge.removeErrorListener(listener);
     }
 
     // ---- Calls ----
@@ -501,6 +505,223 @@ public class PlayerBridgeTest {
                 retrying.get(5, TimeUnit.SECONDS));
     }
 
+    // ---- The player error stream ----
+
+    @Test
+    public void theFirstErrorListenerOpensTheErrorStreamWhichIsAStreamOfItsOwn() {
+        Errors first = listenErrors(new Errors());
+
+        FakeRequest stream = router.only();
+        assertEquals("SUB", stream.action);
+        assertEquals(GET_ERROR, stream.uri);
+        assertArrayEquals("GetErrorRequest is empty", new byte[0], stream.body);
+
+        Errors second = listenErrors(new Errors());
+        assertEquals("a second listener opens none", 1, router.requests.size());
+        listen(new States());
+        assertEquals(2, router.requests.size());
+        FakeRequest states = router.requests.get(1);
+        assertEquals(GET_STATE, states.uri);
+
+        PlayerBridge.removeErrorListener(first);
+        assertFalse(stream.cancelled);
+        PlayerBridge.removeErrorListener(second);
+        assertTrue(stream.cancelled);
+        assertFalse("the state stream has its own listeners", states.cancelled);
+    }
+
+    @Test
+    public void anErrorReachesErrorListenersParsedAndIsLoggedOnUnavailableSongsLine() throws Exception {
+        File log = new File(context.getFilesDir(), "spicetify_extensions.log");
+        log.delete();
+        Errors errors = listenErrors(new Errors());
+
+        router.only().callback.onResponse(200,
+                EsperantoTest.contextPlayerError(20, "spotify:track:x", "not_available_in_current_region"));
+
+        Esperanto.PlayerError error = errors.next();
+        assertEquals(20, error.code);
+        assertEquals("spotify:track:x", error.trackUri);
+        assertEquals("spotify:playlist:p", error.contextUri);
+        assertEquals("not_available_in_current_region", error.reasons);
+        assertEquals("Spicetify player bridge", errors.thread);
+        // The phone checks read the code, the exact reasons and the track (unavailable report, section 8).
+        String line = "GetError 20: reasons=not_available_in_current_region track=spotify:track:x"
+                + " context=spotify:playlist:p";
+        assertEquals("before the listeners hear it", line, Extensions.latestStatus(Extensions.UNAVAILABLE_SONGS));
+        String written = ExtensionsTest.awaitLog(context, log);
+        assertTrue(written, written.contains(" unavailable_songs: " + line + "\n"));
+    }
+
+    @Test
+    public void anErrorIsOnUnavailableSongsLineBeforeAnyListenerHearsIt() throws Exception {
+        Extensions.status(null, Extensions.UNAVAILABLE_SONGS, "before");
+        List<String> seen = new CopyOnWriteArrayList<>();
+        CountDownLatch heard = new CountDownLatch(1);
+        listenErrors(error -> {
+            seen.add(Extensions.latestStatus(Extensions.UNAVAILABLE_SONGS));
+            heard.countDown();
+        });
+        router.only().callback.onResponse(200,
+                EsperantoTest.contextPlayerError(19, "spotify:track:y", "not_available"));
+        assertTrue("no error within 60 s", heard.await(60, TimeUnit.SECONDS));
+        assertEquals(Arrays.asList(
+                "GetError 19: reasons=not_available track=spotify:track:y context=spotify:playlist:p"), seen);
+    }
+
+    @Test
+    public void anErrorAnswerEndsTheErrorStreamWhichOpensAgainAfterTheBackoffUntilAnErrorArrives() throws Exception {
+        RandomSongTest.FakeRouter waiting = new RandomSongTest.FakeRouter();
+        PlayerBridge.attach(waiting);
+        Errors errors = listenErrors(new Errors());
+        RandomSongTest.FakeRequest first = waiting.next();
+        assertEquals(GET_ERROR, first.uri);
+
+        RandomSongTest.FakeRequest second = reopenedAfter(first, waiting, 1000, 404);
+        assertTrue("the ended subscription is released", first.cancelled);
+        assertEquals("Player bridge: connected (Couldn't read the player error: status 404)",
+                Extensions.statusLines().get(0));
+        RandomSongTest.FakeRequest third = reopenedAfter(second, waiting, 2000, 404); // doubled
+        third.callback.onResponse(200, EsperantoTest.contextPlayerError(19, "spotify:track:x", "not_available"));
+        assertEquals(19, errors.next().code);
+        assertEquals("a good answer clears the problem", "Player bridge: connected", Extensions.statusLines().get(0));
+        // The error set the backoff back to a second, and a stream error ends the stream too.
+        reopenedAfter(third, waiting, 1000);
+    }
+
+    @Test
+    public void eachStreamEndsAndReopensOnItsOwnWithItsOwnBackoff() throws Exception {
+        RandomSongTest.FakeRouter waiting = new RandomSongTest.FakeRouter();
+        PlayerBridge.attach(waiting);
+        States states = listen(new States());
+        RandomSongTest.FakeRequest stateStream = waiting.next();
+        stateStream.callback.onResponse(200, EsperantoTest.contextPlayerState("spotify:track:x"));
+        states.next();
+        listenErrors(new Errors());
+        RandomSongTest.FakeRequest errorStream = waiting.next();
+        assertEquals(GET_ERROR, errorStream.uri);
+
+        RandomSongTest.FakeRequest errorsAgain = reopenedAfter(errorStream, waiting, 1000);
+        assertFalse("the state stream stays open", stateStream.cancelled);
+        assertEquals("and keeps its state", "spotify:track:x", PlayerBridge.lastState().trackUri);
+
+        // The error stream's backoff doubled, and the state stream's is still a second.
+        RandomSongTest.FakeRequest statesAgain = reopenedAfter(stateStream, waiting, 1000, 404);
+        assertEquals(GET_STATE, statesAgain.uri);
+        assertFalse("the error stream stays open", errorsAgain.cancelled);
+        reopenedAfter(errorsAgain, waiting, 2000);
+    }
+
+    @Test
+    public void bothStreamsEndingTogetherBothOpenAgainAfterASecond() throws Exception {
+        RandomSongTest.FakeRouter waiting = new RandomSongTest.FakeRouter();
+        PlayerBridge.attach(waiting);
+        listen(new States());
+        RandomSongTest.FakeRequest states = waiting.next();
+        listenErrors(new Errors());
+        RandomSongTest.FakeRequest errors = waiting.next();
+        int sent = waiting.requests.size();
+        FutureTask<Integer> onTime = new FutureTask<>(waiting.requests::size);
+        RandomSongTest.onBridge(() -> {
+            // Right after Spotify starts, its player may answer both SUBs with 404.
+            states.callback.onResponse(404, new byte[0]);
+            errors.callback.onResponse(404, new byte[0]);
+            PlayerBridge.post(() -> PlayerBridge.postDelayed(onTime, 1000)); // behind both answers' handling
+            return null;
+        });
+        assertEquals("both streams reopened by 1000 ms", sent + 2, (int) onTime.get(60, TimeUnit.SECONDS));
+        Set<String> reopened = new HashSet<>();
+        reopened.add(waiting.next().uri);
+        reopened.add(waiting.next().uri);
+        assertEquals(new HashSet<>(Arrays.asList(GET_STATE, GET_ERROR)), reopened);
+    }
+
+    @Test
+    public void aStateStartsTheSilentErrorStreamsBackoffOverSinceThePlayerIsReady() throws Exception {
+        RandomSongTest.FakeRouter waiting = new RandomSongTest.FakeRouter();
+        PlayerBridge.attach(waiting);
+        listenErrors(new Errors());
+        RandomSongTest.FakeRequest first = waiting.next();
+        RandomSongTest.FakeRequest second = reopenedAfter(first, waiting, 1000, 404);
+        // The third SUB is accepted and stays silent, as GetError does while nothing fails.
+        RandomSongTest.FakeRequest third = reopenedAfter(second, waiting, 2000, 404);
+        // Then the player answers with a state, so it's ready.
+        States states = listen(new States());
+        waiting.next().callback.onResponse(200, EsperantoTest.contextPlayerState("spotify:track:x"));
+        states.next();
+        // When the error stream ends later, it opens again after a second, not the 4 s its 404s built up.
+        reopenedAfter(third, waiting, 1000);
+    }
+
+    @Test
+    public void laterStatesLeaveAFailingErrorStreamsBackoffDoubling() throws Exception {
+        RandomSongTest.FakeRouter waiting = new RandomSongTest.FakeRouter();
+        PlayerBridge.attach(waiting);
+        States states = listen(new States());
+        RandomSongTest.FakeRequest stateStream = waiting.next();
+        stateStream.callback.onResponse(200, EsperantoTest.contextPlayerState("spotify:track:x"));
+        states.next(); // the player is ready
+        listenErrors(new Errors());
+        RandomSongTest.FakeRequest first = waiting.next();
+        RandomSongTest.FakeRequest second = reopenedAfter(first, waiting, 1000, 404);
+        // GetError fails again, and while it waits for its 2 s reopen the player changes track.
+        RandomSongTest.FakeRequest third = reopenedAfter(second, waiting, 2000, () -> {
+            second.callback.onResponse(404, new byte[0]);
+            stateStream.callback.onResponse(200, EsperantoTest.contextPlayerState("spotify:track:y"));
+        });
+        states.next();
+        // Still failing: the backoff kept doubling, so the next reopen is 4 s away, not 1 s.
+        reopenedAfter(third, waiting, 4000, 404);
+    }
+
+    @Test
+    public void attachingANewRouterMovesBothStreamsToIt() {
+        listen(new States());
+        listenErrors(new Errors());
+        assertEquals(2, router.requests.size());
+        FakeRouter replacement = new FakeRouter();
+
+        PlayerBridge.attach(replacement);
+
+        assertTrue(router.requests.get(0).cancelled);
+        assertTrue(router.requests.get(1).cancelled);
+        assertEquals(2, replacement.requests.size());
+        Set<String> moved = new HashSet<>();
+        for (FakeRequest request : replacement.requests) moved.add(request.action + " " + request.uri);
+        assertEquals(new HashSet<>(Arrays.asList("SUB " + GET_STATE, "SUB " + GET_ERROR)), moved);
+    }
+
+    @Test
+    public void theProblemLineShowsTheErrorStreamRetrying() throws Exception {
+        listenErrors(new Errors());
+        FakeRequest stream = router.only();
+
+        FutureTask<String> retrying = new FutureTask<>(PlayerBridge::problemLine);
+        RandomSongTest.onBridge(() -> {
+            stream.callback.onError(new IllegalStateException("stream gone"));
+            PlayerBridge.post(retrying); // behind the error's handling, and before its reopen
+            return null;
+        });
+
+        assertEquals("Player bridge: stream error, retrying"
+                + " (The player error stream ended: java.lang.IllegalStateException: stream gone)",
+                retrying.get(5, TimeUnit.SECONDS));
+        assertTrue("an ended stream is released", stream.cancelled);
+    }
+
+    @Test
+    public void aThrowingErrorListenerDoesNotStopTheOthers() throws Exception {
+        listenErrors(error -> {
+            throw new IllegalStateException("listener failed");
+        });
+        Errors errors = listenErrors(new Errors());
+
+        router.only().callback.onResponse(200,
+                EsperantoTest.contextPlayerError(21, "spotify:track:x", "not_available"));
+
+        assertEquals(21, errors.next().code);
+    }
+
     // ---- Spotify's router, through reflection ----
 
     @Test
@@ -612,6 +833,12 @@ public class PlayerBridgeTest {
         return listener;
     }
 
+    private <T extends PlayerBridge.ErrorListener> T listenErrors(T listener) {
+        errorListeners.add(listener);
+        PlayerBridge.addErrorListener(listener);
+        return listener;
+    }
+
     /** Waits for the bridge thread to run everything posted so far; it runs tasks in order. */
     private static void flush(FakeRouter attached) throws InterruptedException {
         Answer marker = new Answer();
@@ -655,7 +882,7 @@ public class PlayerBridgeTest {
                 sent + 1, (int) onTime.get(backoff + 5000, TimeUnit.MILLISECONDS));
         RandomSongTest.FakeRequest reopened = waiting.next();
         assertEquals("SUB", reopened.action);
-        assertEquals(GET_STATE, reopened.uri);
+        assertEquals("the same stream", stream.uri, reopened.uri);
         return reopened;
     }
 
@@ -751,6 +978,23 @@ public class PlayerBridgeTest {
             Esperanto.PlayerState state = received.poll(5, TimeUnit.SECONDS);
             assertNotNull("no state within 5 s", state);
             return state;
+        }
+    }
+
+    private static final class Errors implements PlayerBridge.ErrorListener {
+        private final BlockingQueue<Esperanto.PlayerError> received = new LinkedBlockingQueue<>();
+        volatile String thread;
+
+        @Override
+        public void onError(Esperanto.PlayerError error) {
+            thread = Thread.currentThread().getName();
+            received.add(error);
+        }
+
+        Esperanto.PlayerError next() throws InterruptedException {
+            Esperanto.PlayerError error = received.poll(5, TimeUnit.SECONDS);
+            assertNotNull("no error within 5 s", error);
+            return error;
         }
     }
 

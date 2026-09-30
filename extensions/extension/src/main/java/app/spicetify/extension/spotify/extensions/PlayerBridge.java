@@ -15,25 +15,26 @@ import java.util.concurrent.atomic.AtomicReference;
 
 /**
  * The extensions' line to Spotify's native core (report sections 0 and 1.1): single esperanto
- * calls, and the {@code ContextPlayer/GetState} stream while anything listens to it. It's
- * process-wide, and connects when Spotify builds its {@code SharedCosmosRouterService} (hook H1).
+ * calls, and two streams, each open while anything listens to it: {@code ContextPlayer/GetState},
+ * the player's state, and {@code ContextPlayer/GetError}, what it couldn't play (unavailable songs
+ * report, section 3.2). It's process-wide, and connects when Spotify builds its
+ * {@code SharedCosmosRouterService} (hook H1).
  * <p>
  * Threading: the router answers on Spotify's core thread. There a callback only copies the body
- * and posts it to the one bridge thread, so it never blocks the core, and every {@link Result} and
- * {@link StateListener} runs on the bridge thread. Nothing may block that thread either: a wait is
- * a {@link #postDelayed}, and a network call runs on a thread of its own. Spotify may hold
- * callbacks weakly, so the bridge keeps each live one in {@link #LIVE} until it answers or is
- * cancelled.
+ * and posts it to the one bridge thread, so it never blocks the core, and every {@link Result},
+ * {@link StateListener} and {@link ErrorListener} runs on the bridge thread. Nothing may block
+ * that thread either: a wait is a {@link #postDelayed}, and a network call runs on a thread of its
+ * own. Spotify may hold callbacks weakly, so the bridge keeps each live one in {@link #LIVE} until
+ * it answers or is cancelled.
  * <p>
  * When Spotify replaces its router, calls still waiting on the old one fail with "bridge not
- * connected", so a {@link Result} can arrive as a failure on router loss. A state stream that ends,
+ * connected", so a {@link Result} can arrive as a failure on router loss. A stream that ends,
  * answers an error status, or that Spotify won't open, opens again after a backoff while anything
- * listens.
+ * listens to it. Each stream keeps a backoff of its own.
  */
 public final class PlayerBridge {
     static final String NOT_CONNECTED = "bridge not connected";
     private static final String STATUS_ID = "player_bridge";
-    private static final String GET_STATE = "sp://esperanto/" + Esperanto.CONTEXT_PLAYER + "/GetState";
     private static final long FIRST_REOPEN_MILLIS = 1000;
     private static final long LAST_REOPEN_MILLIS = 60_000;
 
@@ -48,21 +49,63 @@ public final class PlayerBridge {
         return thread;
     });
     private static final Set<CosmosRouter.Callback> LIVE = ConcurrentHashMap.newKeySet();
-    private static final CopyOnWriteArrayList<StateListener> LISTENERS = new CopyOnWriteArrayList<>();
     /**
-     * Guards the router, the stream and the last state. Router callbacks never take it. With it held,
-     * the bridge may take Spotify's router monitor to send, but never the other way around.
+     * Guards the router and the streams. Router callbacks never take it. With it held, the bridge
+     * may take Spotify's router monitor to send, but never the other way around.
      */
     private static final Object LOCK = new Object();
     private static volatile CosmosRouter router;
-    private static volatile Stream stream;
-    private static volatile Esperanto.PlayerState lastState;
     /** The latest thing that went wrong, shown on the bridge's settings line until it's resolved. */
     private static volatile String problem;
-    /** The wait before the next reopen: it doubles each time up to a minute, and a state or a new router resets it. */
-    private static long reopenMillis = FIRST_REOPEN_MILLIS; // guarded by LOCK
-    /** A reopen is due on the current router, so another failure meanwhile schedules no second one. */
-    private static boolean reopenDue; // guarded by LOCK
+
+    /** The player's state, for Trash Bin and Shuffle+; its latest is {@link #lastState()}. */
+    private static final Subscription<Esperanto.PlayerState, StateListener> STATES =
+            new Subscription<Esperanto.PlayerState, StateListener>("GetState", "player state") {
+                @Override
+                byte[] request() {
+                    return Esperanto.getState();
+                }
+
+                @Override
+                Esperanto.PlayerState parse(byte[] body) throws IOException {
+                    return Esperanto.parseState(body);
+                }
+
+                @Override
+                void tell(StateListener listener, Esperanto.PlayerState state) {
+                    listener.onState(state);
+                }
+            };
+
+    /**
+     * What the player couldn't play. Each error goes to the extensions log as Unavailable songs'
+     * latest status before its listeners hear it: the phone checks read its code, its exact reasons
+     * and its track there (unavailable songs report, section 8).
+     */
+    private static final Subscription<Esperanto.PlayerError, ErrorListener> ERRORS =
+            new Subscription<Esperanto.PlayerError, ErrorListener>("GetError", "player error") {
+                @Override
+                byte[] request() {
+                    return Esperanto.getError();
+                }
+
+                @Override
+                Esperanto.PlayerError parse(byte[] body) throws IOException {
+                    return Esperanto.parseError(body);
+                }
+
+                @Override
+                void heard(Esperanto.PlayerError error) {
+                    Extensions.status(Extensions.appContext(), Extensions.UNAVAILABLE_SONGS, "GetError " + error.code
+                            + ": reasons=" + error.reasons + " track=" + error.trackUri + " context=" + error.contextUri
+                            + (error.message.isEmpty() ? "" : " message=" + error.message));
+                }
+
+                @Override
+                void tell(ErrorListener listener, Esperanto.PlayerError error) {
+                    listener.onError(error);
+                }
+            };
 
     interface Result {
         void done(byte[] body);
@@ -73,6 +116,11 @@ public final class PlayerBridge {
     /** Hears each player state on the bridge thread. It may hear one more just after it's removed. */
     interface StateListener {
         void onState(Esperanto.PlayerState state);
+    }
+
+    /** Hears each player error on the bridge thread. It may hear one more just after it's removed. */
+    interface ErrorListener {
+        void onError(Esperanto.PlayerError error);
     }
 
     private PlayerBridge() {}
@@ -124,19 +172,19 @@ public final class PlayerBridge {
 
     /**
      * Sends everything through {@code cosmos} from now on. Calls still waiting on the old router
-     * fail, and the state stream moves to the new one if anything listens. The reopen backoff starts
-     * over, and a reopen that was due on the old router does nothing.
+     * fail, and each stream moves to the new one if anything listens to it. The reopen backoffs
+     * start over, and a reopen that was due on the old router does nothing.
      */
     static void attach(CosmosRouter cosmos) {
         synchronized (LOCK) {
             CosmosRouter old = router;
-            closeStream();
+            STATES.close();
+            ERRORS.close();
             router = cosmos;
             problem = null;
-            reopenDue = false;
-            reopenMillis = FIRST_REOPEN_MILLIS;
             if (old != null && old != cosmos) failPending(old);
-            if (!LISTENERS.isEmpty()) openStream();
+            STATES.restart();
+            ERRORS.restart();
         }
     }
 
@@ -182,30 +230,34 @@ public final class PlayerBridge {
 
     /** Adds {@code listener}. The first one opens the {@code GetState} stream, as does the next one after it failed. */
     static void addStateListener(StateListener listener) {
-        synchronized (LOCK) {
-            LISTENERS.addIfAbsent(listener);
-            if (stream == null) openStream();
-        }
+        STATES.add(listener);
     }
 
     /** Removes {@code listener}. Removing the last one cancels the stream. */
     static void removeStateListener(StateListener listener) {
-        synchronized (LOCK) {
-            LISTENERS.remove(listener);
-            if (LISTENERS.isEmpty()) closeStream();
-        }
+        STATES.remove(listener);
+    }
+
+    /** Adds {@code listener}. The first one opens the {@code GetError} stream, as does the next one after it failed. */
+    static void addErrorListener(ErrorListener listener) {
+        ERRORS.add(listener);
+    }
+
+    /** Removes {@code listener}. Removing the last one cancels the stream. */
+    static void removeErrorListener(ErrorListener listener) {
+        ERRORS.remove(listener);
     }
 
     /** The latest state of the open stream, or null when no stream is open or none has arrived. */
     static Esperanto.PlayerState lastState() {
-        return lastState;
+        return STATES.last;
     }
 
     /** The bridge's full line, connected or not, with its latest problem in parentheses. */
     static String statusLine() {
         String line = problemLine();
         if (line != null) return line;
-        Esperanto.PlayerState state = lastState;
+        Esperanto.PlayerState state = STATES.last;
         if (state == null || state.trackUri == null) return "Player bridge: connected" + note();
         return "Player bridge: connected, " + state.trackUri + note();
     }
@@ -217,8 +269,7 @@ public final class PlayerBridge {
     public static String problemLine() {
         if (!connected()) return "Player bridge: waiting for Spotify" + note();
         synchronized (LOCK) {
-            // Something listens, yet no stream is open: it ended, or it couldn't open, and a reopen is due.
-            if (stream == null && !LISTENERS.isEmpty()) return "Player bridge: stream error, retrying" + note();
+            if (STATES.waiting() || ERRORS.waiting()) return "Player bridge: stream error, retrying" + note();
         }
         return null;
     }
@@ -227,112 +278,6 @@ public final class PlayerBridge {
     private static String note() {
         String latest = problem;
         return latest == null ? "" : " (" + latest + ")";
-    }
-
-    /**
-     * Called with {@link #LOCK} held. Without a live router, the next {@link #attach} opens it; a
-     * live router that won't open it gets a reopen.
-     */
-    private static void openStream() {
-        CosmosRouter current = router;
-        if (current == null || destroyed(current)) return;
-        Stream opened = new Stream();
-        stream = opened; // before resolve, because Spotify may answer before resolve returns
-        LIVE.add(opened);
-        try {
-            opened.cancel = current.resolve("SUB", GET_STATE, Esperanto.getState(), opened);
-        } catch (Throwable e) {
-            stream = null;
-            LIVE.remove(opened);
-            Log.w("Spicetify", "Couldn't open the player state stream", e);
-            report("Couldn't open the player state stream: " + e);
-            reopenLater();
-        }
-    }
-
-    /** Called with {@link #LOCK} held: one reopen at a time, after the backoff, which then doubles up to a minute. */
-    private static void reopenLater() {
-        if (reopenDue) return;
-        reopenDue = true;
-        CosmosRouter dueOn = router;
-        postDelayed(() -> reopen(dueOn), reopenMillis);
-        reopenMillis = Math.min(reopenMillis * 2, LAST_REOPEN_MILLIS);
-    }
-
-    /**
-     * On the bridge thread: opens a stream when something listens and none is open. A destroyed
-     * router opens nothing and schedules nothing more; the next {@link #attach} opens the stream.
-     */
-    private static void reopen(CosmosRouter dueOn) {
-        synchronized (LOCK) {
-            if (router != dueOn) return; // attach started over
-            reopenDue = false;
-            if (stream == null && !LISTENERS.isEmpty()) openStream();
-        }
-    }
-
-    /** Called with {@link #LOCK} held. It forgets the last state too, since the track can now change unseen. */
-    private static void closeStream() {
-        lastState = null;
-        Stream closing = stream;
-        if (closing == null) return;
-        stream = null;
-        LIVE.remove(closing);
-        if (closing.cancel != null) release(closing.cancel);
-    }
-
-    /**
-     * On the bridge thread. An answer other than 200 ends the stream, as a stream error does: Spotify's
-     * core ends the subscription after one, such as the 404 it answers before its player is ready. A
-     * state that can't be read is reported once per stream, which stays open, since it's alive.
-     */
-    private static void onState(Stream from, int status, byte[] body) {
-        if (from != stream) return; // the old stream had it in flight
-        if (status != 200) {
-            synchronized (LOCK) {
-                if (from != stream) return;
-                closeStream();
-                if (!LISTENERS.isEmpty()) reopenLater();
-            }
-            Log.w("Spicetify", "The player state stream answered status " + status);
-            report("Couldn't read the player state: status " + status);
-            return;
-        }
-        Esperanto.PlayerState state;
-        try {
-            state = Esperanto.parseState(body);
-        } catch (IOException e) {
-            Log.w("Spicetify", "Couldn't read the player state", e);
-            if (!from.reported) {
-                from.reported = true;
-                report("Couldn't read the player state: " + e.getMessage());
-            }
-            return;
-        }
-        synchronized (LOCK) {
-            if (from != stream) return; // closed while this one was read
-            lastState = state;
-            problem = null;
-            reopenMillis = FIRST_REOPEN_MILLIS;
-        }
-        for (StateListener listener : LISTENERS) {
-            try {
-                listener.onState(state);
-            } catch (Throwable e) {
-                Log.w("Spicetify", "A player state listener failed", e);
-            }
-        }
-    }
-
-    /** On the bridge thread. While anything listens, the stream opens again after the backoff. */
-    private static void onStreamError(Stream from, Throwable error) {
-        synchronized (LOCK) {
-            if (from != stream) return;
-            closeStream();
-            if (!LISTENERS.isEmpty()) reopenLater();
-        }
-        Log.w("Spicetify", "The player state stream ended", error);
-        report("The player state stream ended: " + error);
     }
 
     /** Shows {@code line} on the bridge's settings line and appends it to the extensions log. */
@@ -439,27 +384,214 @@ public final class PlayerBridge {
         }
     }
 
-    /** The {@code GetState} subscription: each answer is one state, until it's cancelled. */
+    /**
+     * A SUB the bridge keeps open while anything listens to it, GetState or GetError, by one set of
+     * rules: an error, or an answer other than 200, ends it, and it opens again after a backoff that
+     * doubles up to a minute. A good answer or a new router sets that backoff back to a second, and
+     * a good state sets an open error stream's back too.
+     */
+    private abstract static class Subscription<T, L> {
+        final String uri;
+        /** What its lines call it, such as "player state". */
+        final String name;
+        final CopyOnWriteArrayList<L> listeners = new CopyOnWriteArrayList<>();
+        /** The open stream, or null; it changes only with {@link #LOCK} held. */
+        volatile Stream stream;
+        /** The open stream's latest answer, or null when none is open or none has arrived. */
+        volatile T last;
+        /** The wait before the next reopen. */
+        long reopenMillis = FIRST_REOPEN_MILLIS; // guarded by LOCK
+        /** A reopen is due on the current router, so another failure meanwhile schedules no second one. */
+        boolean reopenDue; // guarded by LOCK
+
+        Subscription(String method, String name) {
+            this.uri = "sp://esperanto/" + Esperanto.CONTEXT_PLAYER + "/" + method;
+            this.name = name;
+        }
+
+        abstract byte[] request();
+
+        abstract T parse(byte[] body) throws IOException;
+
+        /** On the bridge thread, before the listeners hear {@code value}. */
+        void heard(T value) {}
+
+        abstract void tell(L listener, T value);
+
+        void add(L listener) {
+            synchronized (LOCK) {
+                listeners.addIfAbsent(listener);
+                if (stream == null) open();
+            }
+        }
+
+        void remove(L listener) {
+            synchronized (LOCK) {
+                listeners.remove(listener);
+                if (listeners.isEmpty()) close();
+            }
+        }
+
+        /**
+         * Called with {@link #LOCK} held. Something listens, yet no stream is open: it ended, or it
+         * couldn't open, and a reopen is due.
+         */
+        boolean waiting() {
+            return stream == null && !listeners.isEmpty();
+        }
+
+        /**
+         * Called with {@link #LOCK} held. Without a live router, the next {@link #attach} opens it; a
+         * live router that won't open it gets a reopen.
+         */
+        void open() {
+            CosmosRouter current = router;
+            if (current == null || destroyed(current)) return;
+            Stream opened = new Stream(this);
+            stream = opened; // before resolve, because Spotify may answer before resolve returns
+            LIVE.add(opened);
+            try {
+                opened.cancel = current.resolve("SUB", uri, request(), opened);
+            } catch (Throwable e) {
+                stream = null;
+                LIVE.remove(opened);
+                Log.w("Spicetify", "Couldn't open the " + name + " stream", e);
+                report("Couldn't open the " + name + " stream: " + e);
+                reopenLater();
+            }
+        }
+
+        /**
+         * Called with {@link #LOCK} held: one reopen at a time, after the backoff, which then doubles
+         * up to a minute.
+         */
+        private void reopenLater() {
+            if (reopenDue) return;
+            reopenDue = true;
+            CosmosRouter dueOn = router;
+            postDelayed(() -> reopen(dueOn), reopenMillis);
+            reopenMillis = Math.min(reopenMillis * 2, LAST_REOPEN_MILLIS);
+        }
+
+        /**
+         * On the bridge thread: opens a stream when something listens and none is open. A destroyed
+         * router opens nothing and schedules nothing more; the next {@link #attach} opens the stream.
+         */
+        private void reopen(CosmosRouter dueOn) {
+            synchronized (LOCK) {
+                if (router != dueOn) return; // attach started over
+                reopenDue = false;
+                if (waiting()) open();
+            }
+        }
+
+        /** Called with {@link #LOCK} held. It forgets the last answer too, since the track can now change unseen. */
+        void close() {
+            last = null;
+            Stream closing = stream;
+            if (closing == null) return;
+            stream = null;
+            LIVE.remove(closing);
+            if (closing.cancel != null) release(closing.cancel);
+        }
+
+        /**
+         * Called with {@link #LOCK} held, on a new router: the backoff starts over, and the stream
+         * opens if anything listens.
+         */
+        void restart() {
+            reopenDue = false;
+            reopenMillis = FIRST_REOPEN_MILLIS;
+            if (!listeners.isEmpty()) open();
+        }
+
+        /**
+         * On the bridge thread. An answer other than 200 ends the stream, as a stream error does:
+         * Spotify's core ends the subscription after one, such as the 404 it answers before its
+         * player is ready. An answer that can't be read is reported once per stream, which stays
+         * open, since it's alive.
+         */
+        void onAnswer(Stream from, int status, byte[] body) {
+            if (from != stream) return; // the old stream had it in flight
+            if (status != 200) {
+                synchronized (LOCK) {
+                    if (from != stream) return;
+                    close();
+                    if (!listeners.isEmpty()) reopenLater();
+                }
+                Log.w("Spicetify", "The " + name + " stream answered status " + status);
+                report("Couldn't read the " + name + ": status " + status);
+                return;
+            }
+            T value;
+            try {
+                value = parse(body);
+            } catch (IOException e) {
+                Log.w("Spicetify", "Couldn't read the " + name, e);
+                if (!from.reported) {
+                    from.reported = true;
+                    report("Couldn't read the " + name + ": " + e.getMessage());
+                }
+                return;
+            }
+            synchronized (LOCK) {
+                if (from != stream) return; // closed while this one was read
+                last = value;
+                problem = null;
+                reopenMillis = FIRST_REOPEN_MILLIS;
+                // A state means the player is ready, so an error stream that's open, silent because
+                // nothing failed, starts its backoff over too: GetError answers only when something
+                // fails, so its own answers seldom reset it. One that's failing keeps doubling.
+                if (this == STATES && ERRORS.stream != null) ERRORS.reopenMillis = FIRST_REOPEN_MILLIS;
+            }
+            heard(value);
+            for (L listener : listeners) {
+                try {
+                    tell(listener, value);
+                } catch (Throwable e) {
+                    Log.w("Spicetify", "A " + name + " listener failed", e);
+                }
+            }
+        }
+
+        /** On the bridge thread. While anything listens, the stream opens again after the backoff. */
+        void onEnded(Stream from, Throwable error) {
+            synchronized (LOCK) {
+                if (from != stream) return;
+                close();
+                if (!listeners.isEmpty()) reopenLater();
+            }
+            Log.w("Spicetify", "The " + name + " stream ended", error);
+            report("The " + name + " stream ended: " + error);
+        }
+    }
+
+    /** One opening of a {@link Subscription}: each answer is one state or error, until it's cancelled. */
     private static final class Stream implements CosmosRouter.Callback {
+        final Subscription<?, ?> of;
         CosmosRouter.Cancel cancel; // guarded by LOCK
         boolean reported; // only the bridge thread uses it
+
+        Stream(Subscription<?, ?> of) {
+            this.of = of;
+        }
 
         @Override
         public void onResponse(int status, byte[] body) {
             try {
                 byte[] copy = copy(body);
-                post(() -> onState(this, status, copy));
+                post(() -> of.onAnswer(this, status, copy));
             } catch (Throwable e) {
-                Log.w("Spicetify", "A player state answer failed", e);
+                Log.w("Spicetify", "A " + of.name + " answer failed", e);
             }
         }
 
         @Override
         public void onError(Throwable error) {
             try {
-                post(() -> onStreamError(this, error));
+                post(() -> of.onEnded(this, error));
             } catch (Throwable e) {
-                Log.w("Spicetify", "A player state error failed", e);
+                Log.w("Spicetify", "A " + of.name + " error failed", e);
             }
         }
     }

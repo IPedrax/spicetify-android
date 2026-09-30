@@ -54,6 +54,36 @@ class ExtensionsPatchTest {
     }
 
     @Test
+    fun `the protocol check covers player errors, queue insertion, playability and the unplayable songs setting`() {
+        val player = "Lcom/spotify/player/esperanto/proto/"
+        val policy = "Lcom/spotify/playlist/policy/proto/"
+        val cosmos = "Lcom/spotify/cosmos/util/"
+        val expected = mapOf(
+            "${player}EsGetStateRequest\$GetStateRequest;#PREV_TRACKS_CAP" to 1,
+            "${player}EsGetStateRequest\$GetStateRequest;#NEXT_TRACKS_CAP" to 2,
+            "${player}EsContextPlayerState\$ContextPlayerState;#NEXT_TRACKS" to 21,
+            "${player}EsContextPlayerError\$ContextPlayerError;#CODE" to 1,
+            "${player}EsContextPlayerError\$ContextPlayerError;#MESSAGE" to 2,
+            "${player}EsContextPlayerError\$ContextPlayerError;#DATA" to 3,
+            "${player}EsPlayAsNextInQueueRequest\$PlayAsNextInQueueRequest;#TRACKS" to 1,
+            "${policy}PlaylistRequestDecorationPolicy;#TRACK" to 2,
+            "${policy}PlaylistTrackDecorationPolicy;#TRACK" to 1,
+            "${cosmos}policy/proto/TrackDecorationPolicy;#PLAYABLE" to 5,
+            "${cosmos}policy/proto/TrackDecorationPolicy;#IS_LOCAL" to 13,
+            "${policy}PlaylistItemDecorationPolicy;#ROW_ID" to 9,
+            "Lcom/spotify/playlist/proto/PlaylistRequest\$Item;#TRACK_METADATA" to 4,
+            "Lcom/spotify/playlist/proto/PlaylistRequest\$Item;#ROW_ID" to 7,
+            "Lcom/spotify/playlist/proto/PlaylistRequest\$Item;#TRACK_PLAY_STATE" to 8,
+            "${cosmos}proto/TrackMetadata;#PLAYABLE" to 6,
+            "${cosmos}proto/TrackMetadata;#IS_LOCAL" to 11,
+            "${cosmos}proto/TrackPlayState;#IS_PLAYABLE" to 1,
+            "${cosmos}proto/TrackPlayState;#PLAYABILITY_RESTRICTION" to 2,
+            "Lcom/spotify/settings/esperanto/proto/SettingsOuterClass\$SettingsState;#SHOW_UNAVAILABLE_TRACKS" to 17,
+        ).mapKeys { it.key + "_FIELD_NUMBER" }
+        assertEquals(expected, esperantoFieldNumbers.filterKeys { it in expected })
+    }
+
+    @Test
     fun `hooks the return that follows initializeScheduling`() {
         assertEquals(2, bridgeHookIndex(listOf(schedule, schedule, returnVoid)))
     }

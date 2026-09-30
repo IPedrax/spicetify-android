@@ -33,6 +33,8 @@ public final class Extensions {
     public static final String RANDOM_SONG = "random_song";
     public static final String SHUFFLE_PLUS = "shuffle_plus";
     public static final String HIDE_PODCASTS = "hide_podcasts";
+    /** Unavailable songs. The bridge puts each player error on its line, which the phone checks read. */
+    public static final String UNAVAILABLE_SONGS = "unavailable_songs";
 
     private static final String PREFERENCES = "spicetify_extensions";
     /** The Android extensions, in the order Spicetify settings lists their status. */

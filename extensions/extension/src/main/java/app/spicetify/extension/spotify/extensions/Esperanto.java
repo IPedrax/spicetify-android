@@ -11,9 +11,9 @@ import java.util.TreeMap;
 /**
  * The esperanto messages the extensions send and receive over {@code sp://esperanto/<service>/
  * <method>}: request builders, response parsers and the player state value. Field numbers come
- * from the marketplace extensions research report, sections 1.2, 2.1 to 2.3 and 3.2 to 3.4, and
- * the Your Library trace, section 9. They are checked again at patch time against the installed
- * Spotify build.
+ * from the marketplace extensions research report, sections 1.2, 2.1 to 2.3 and 3.2 to 3.4, the
+ * Your Library trace, section 9, and the unavailable songs report, sections 1.3, 1.4, 3.2 and 7.4.
+ * They are checked again at patch time against the installed Spotify build.
  */
 final class Esperanto {
     static final String CONTEXT_PLAYER = "spotify.player.esperanto.proto.ContextPlayer";
@@ -21,6 +21,8 @@ final class Esperanto {
     static final String METADATA = "spotify.metadata_esperanto.proto.ClassicMetadataService";
     /** With an underscore in {@code your_library_esperanto}; the dotted name has no route. */
     static final String YOUR_LIBRARY = "spotify.your_library_esperanto.proto.YourLibraryService";
+    /** Its {@code GetState} is a SUB with an empty body, answered by {@code SettingsState}. */
+    static final String SETTINGS = "spotify.settings.esperanto.proto.Settings";
     static final String LIKED_SONGS = "spotify:playlist:37i9dQZF1F5p3rmiWPIYgZ";
     /** Two of {@link #parseResult}'s answers; the others are 2 NOT_FOUND and 3 CONFLICT. */
     static final int OK = 0;
@@ -43,9 +45,21 @@ final class Esperanto {
         List<String> artistUris = new ArrayList<>();
         boolean advertisement;
         boolean episode;
+        /** The id's bytes as lowercase hex, as the app shows it; null without one. */
         String playbackId;
         long queueRevision;
         boolean paused;
+        /** What plays next, as far as {@link #getState()}'s cap reaches. */
+        List<ContextTrack> nextTracks = new ArrayList<>();
+    }
+
+    /**
+     * A track the player lists: its uri, and its uid, which in a playlist is the item's row id
+     * (unavailable report, section 2.3).
+     */
+    static final class ContextTrack {
+        String uri;
+        String uid;
     }
 
     static PlayerState parseState(byte[] contextPlayerState) throws IOException {
@@ -60,10 +74,15 @@ final class Esperanto {
                     readProvidedTrack(reader.message(), state);
                     break;
                 case 8:
-                    state.playbackId = reader.string();
+                    // bytes, which the app shows as lowercase hex (Lp/v3w;->apply 193 to 211)
+                    byte[] playbackId = reader.bytes();
+                    if (playbackId.length > 0) state.playbackId = hex(playbackId);
                     break;
                 case 14:
                     state.paused = reader.varint() != 0;
+                    break;
+                case 21:
+                    state.nextTracks.add(readNextTrack(reader.message()));
                     break;
                 case 25:
                     state.queueRevision = reader.varint();
@@ -111,6 +130,82 @@ final class Esperanto {
         state.episode = isEpisodeUri(state.trackUri);
     }
 
+    /** A next track's {@code ProvidedTrack}: only its context track's uri and uid, never the current track's fields. */
+    private static ContextTrack readNextTrack(Wire.Reader providedTrack) throws IOException {
+        ContextTrack track = new ContextTrack();
+        while (providedTrack.next()) {
+            if (providedTrack.field() != 1) {
+                providedTrack.skip();
+                continue;
+            }
+            Wire.Reader contextTrack = providedTrack.message();
+            while (contextTrack.next()) {
+                switch (contextTrack.field()) {
+                    case 1:
+                        track.uri = contextTrack.string();
+                        break;
+                    case 2:
+                        track.uid = contextTrack.string();
+                        break;
+                    default:
+                        contextTrack.skip();
+                }
+            }
+        }
+        return track;
+    }
+
+    private static String hex(byte[] bytes) {
+        StringBuilder hex = new StringBuilder(bytes.length * 2);
+        for (byte b : bytes) hex.append(Character.forDigit((b >> 4) & 0xf, 16)).append(Character.forDigit(b & 0xf, 16));
+        return hex.toString();
+    }
+
+    /**
+     * A parsed {@code ContextPlayerError}, which {@code ContextPlayer/GetError} streams when the
+     * player can't do something (unavailable report, section 3.2). Codes 19 to 22 are
+     * ONE_TRACK_UNPLAYABLE, ONE_TRACK_UNPLAYABLE_AUTO_STOPPED, ALL_TRACKS_UNPLAYABLE_AUTO_STOPPED and
+     * SKIP_TO_NON_EXISTENT_TRACK_AUTO_STOPPED.
+     */
+    static final class PlayerError {
+        int code;
+        String message = "";
+        String trackUri;
+        String contextUri;
+        /** The data's {@code reasons}, else its {@code playback_error}, as the app reads them; null without either. */
+        String reasons;
+    }
+
+    /**
+     * Reads {@code ContextPlayerError{1 code, 2 message, 3 data: map<string, string>}} as
+     * {@code Lp/t3w;->apply} does.
+     */
+    static PlayerError parseError(byte[] contextPlayerError) throws IOException {
+        PlayerError error = new PlayerError();
+        Map<String, String> data = new TreeMap<>();
+        Wire.Reader reader = new Wire.Reader(contextPlayerError);
+        while (reader.next()) {
+            switch (reader.field()) {
+                case 1:
+                    error.code = (int) reader.varint();
+                    break;
+                case 2:
+                    error.message = reader.string();
+                    break;
+                case 3:
+                    readMetadataEntry(reader.message(), data);
+                    break;
+                default:
+                    reader.skip();
+            }
+        }
+        error.trackUri = data.get("track_uri");
+        error.contextUri = data.get("context_uri");
+        String reasons = data.get("reasons");
+        error.reasons = reasons != null ? reasons : data.get("playback_error");
+        return error;
+    }
+
     private static void readMetadataEntry(Wire.Reader entry, Map<String, String> metadata) throws IOException {
         String key = null;
         String value = "";
@@ -144,7 +239,24 @@ final class Esperanto {
         return new byte[0];
     }
 
+    /**
+     * {@code GetStateRequest{1 prev_tracks_cap{1 0}, 2 next_tracks_cap{1 3}}}, each cap an
+     * {@code OptionalInt64}: no past tracks and the next three, so a state stays small on a big
+     * playlist and still says what comes next.
+     */
     static byte[] getState() {
+        Wire.Writer previous = new Wire.Writer();
+        previous.varint(1, 0);
+        Wire.Writer next = new Wire.Writer();
+        next.varint(1, 3);
+        Wire.Writer request = new Wire.Writer();
+        request.message(1, previous);
+        request.message(2, next);
+        return request.toByteArray();
+    }
+
+    /** {@code GetErrorRequest} has no fields. */
+    static byte[] getError() {
         return new byte[0];
     }
 
@@ -229,6 +341,21 @@ final class Esperanto {
         return request.toByteArray();
     }
 
+    /**
+     * {@code PlayAsNextInQueueRequest{1 tracks: [ContextTrack{1 uri}]}}: the tracks go into the
+     * queue to play next, in order (unavailable report, section 3.4). The answer is a
+     * {@code ResponseWithReasons}, which {@link #parseResult} reads.
+     */
+    static byte[] playAsNextInQueue(List<String> trackUris) {
+        Wire.Writer request = new Wire.Writer();
+        for (String uri : trackUris) {
+            Wire.Writer track = new Wire.Writer();
+            track.string(1, uri);
+            request.message(1, track);
+        }
+        return request.toByteArray();
+    }
+
     /** {@code ProvidedTrack}: a context track carried by {@code provider "context"}. */
     private static Wire.Writer providedTrack(String uri) {
         Wire.Writer contextTrack = new Wire.Writer();
@@ -240,9 +367,23 @@ final class Esperanto {
     }
 
     static byte[] playlistGet(String uri, int start, int length, boolean countsOnly) {
+        return playlistRequest(uri, start, length, false);
+    }
+
+    /**
+     * The same page with the songs that can't play too, and each item's row id and playability
+     * (unavailable report, sections 1.3 and 7.4): {@code show_unavailable}, then {@code policy{2
+     * track{1 track{5 playable, 13 is_local}}, 4 item{1 uri, 9 row_id}}}. The core decorates only
+     * what a policy asks for, so {@code is_local} is asked for too.
+     */
+    static byte[] playlistPlayability(String uri, int start, int length) {
+        return playlistRequest(uri, start, length, true);
+    }
+
+    private static byte[] playlistRequest(String uri, int start, int length, boolean playability) {
         Wire.Writer query = new Wire.Writer();
         query.bytes(1, packedVarints(4, 3, 7, 6)); // NOT_BANNED, ARTIST_NOT_BANNED, NOT_RECOMMENDATION, NOT_EPISODE
-        query.bool(8, false);
+        query.bool(8, playability);
         if (length >= 0) {
             Wire.Writer range = new Wire.Writer();
             range.varint(1, start);
@@ -256,6 +397,15 @@ final class Esperanto {
         item.bool(1, true);
         Wire.Writer policy = new Wire.Writer();
         policy.message(1, playlist);
+        if (playability) {
+            Wire.Writer track = new Wire.Writer();
+            track.bool(5, true);
+            track.bool(13, true);
+            Wire.Writer playlistTrack = new Wire.Writer();
+            playlistTrack.message(1, track);
+            policy.message(2, playlistTrack);
+            item.bool(9, true);
+        }
         policy.message(4, item);
 
         Wire.Writer request = new Wire.Writer();
@@ -322,10 +472,32 @@ final class Esperanto {
 
     // ---- Response parsers ----
 
+    /**
+     * A playlist item as {@link #playlistPlayability} lists it. It's greyed out when
+     * {@code isPlayable} is false; a plain listing leaves everything but the uri at its default.
+     */
+    static final class PlaylistItem {
+        String uri;
+        String rowId;
+        /** {@code TrackMetadata.playable}. */
+        boolean playable;
+        /**
+         * {@code TrackPlayState.is_playable}: true unless the item says false, as the app reads it
+         * ({@code Lp/omz;->b} 134 to 144).
+         */
+        boolean isPlayable = true;
+        /** {@code PlayabilityRestriction}, such as 4 NOT_IN_CATALOGUE; 0 UNKNOWN when absent. */
+        int restriction;
+        /** {@code TrackMetadata.is_local}. */
+        boolean local;
+    }
+
     /** A page of a playlist or Liked Songs: its total {@code length} and the uris read so far. */
     static final class PlaylistPage {
         int length;
         List<String> uris = new ArrayList<>();
+        /** Each item read so far, with its row id and playability when the request asked for them. */
+        List<PlaylistItem> items = new ArrayList<>();
         boolean loading;
     }
 
@@ -388,14 +560,78 @@ final class Esperanto {
         }
     }
 
-    private static void readPlaylistItem(Wire.Reader item, PlaylistPage page) throws IOException {
-        while (item.next()) {
-            if (item.field() == 18) {
-                page.uris.add(item.string());
-            } else {
-                item.skip();
+    /** {@code Item{4 track_metadata, 7 row_id, 8 track_play_state, 18 uri}}. */
+    private static void readPlaylistItem(Wire.Reader reader, PlaylistPage page) throws IOException {
+        PlaylistItem item = new PlaylistItem();
+        while (reader.next()) {
+            switch (reader.field()) {
+                case 4:
+                    readTrackMetadata(reader.message(), item);
+                    break;
+                case 7:
+                    item.rowId = reader.string();
+                    break;
+                case 8:
+                    readTrackPlayState(reader.message(), item);
+                    break;
+                case 18:
+                    item.uri = reader.string();
+                    break;
+                default:
+                    reader.skip();
             }
         }
+        if (item.uri != null) page.uris.add(item.uri);
+        page.items.add(item);
+    }
+
+    /** {@code TrackMetadata{6 playable, 11 is_local}}. */
+    private static void readTrackMetadata(Wire.Reader metadata, PlaylistItem item) throws IOException {
+        while (metadata.next()) {
+            switch (metadata.field()) {
+                case 6:
+                    item.playable = metadata.varint() != 0;
+                    break;
+                case 11:
+                    item.local = metadata.varint() != 0;
+                    break;
+                default:
+                    metadata.skip();
+            }
+        }
+    }
+
+    /** {@code TrackPlayState{1 is_playable, 2 playability_restriction}}. */
+    private static void readTrackPlayState(Wire.Reader playState, PlaylistItem item) throws IOException {
+        while (playState.next()) {
+            switch (playState.field()) {
+                case 1:
+                    item.isPlayable = playState.varint() != 0;
+                    break;
+                case 2:
+                    item.restriction = (int) playState.varint();
+                    break;
+                default:
+                    playState.skip();
+            }
+        }
+    }
+
+    /**
+     * {@code SettingsState.show_unavailable_tracks} (17), the "Show unplayable songs" switch. While
+     * it's off, lists leave out the songs that can't play (unavailable report, section 1.4).
+     */
+    static boolean parseShowUnavailableTracks(byte[] settingsState) throws IOException {
+        boolean show = false;
+        Wire.Reader reader = new Wire.Reader(settingsState);
+        while (reader.next()) {
+            if (reader.field() == 17) {
+                show = reader.varint() != 0;
+            } else {
+                reader.skip();
+            }
+        }
+        return show;
     }
 
     /**

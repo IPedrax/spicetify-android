@@ -43,8 +43,14 @@ private const val HOME_CHIP_BRIDGE = "Lapp/spicetify/extension/spotify/extension
 // map entries (1 and 2 by protobuf's rules), and enum values, since obfuscated enums have no constants:
 // BoolPredicate, and Your Library's Filter (PLAYLIST 2, ALBUM 0) and LinkType (TRACK 4).
 internal val esperantoFieldNumbers = mapOf(
-    "Lcom/spotify/player/esperanto/proto/EsContextPlayerState\$ContextPlayerState;" to
-        mapOf("CONTEXT_URI" to 2, "TRACK" to 7, "PLAYBACK_ID" to 8, "IS_PAUSED" to 14, "QUEUE_REVISION" to 25),
+    "Lcom/spotify/player/esperanto/proto/EsContextPlayerState\$ContextPlayerState;" to mapOf(
+        "CONTEXT_URI" to 2, "TRACK" to 7, "PLAYBACK_ID" to 8, "IS_PAUSED" to 14, "NEXT_TRACKS" to 21,
+        "QUEUE_REVISION" to 25,
+    ),
+    "Lcom/spotify/player/esperanto/proto/EsGetStateRequest\$GetStateRequest;" to
+        mapOf("PREV_TRACKS_CAP" to 1, "NEXT_TRACKS_CAP" to 2),
+    "Lcom/spotify/player/esperanto/proto/EsContextPlayerError\$ContextPlayerError;" to
+        mapOf("CODE" to 1, "MESSAGE" to 2, "DATA" to 3),
     "Lcom/spotify/player/esperanto/proto/EsProvidedTrack\$ProvidedTrack;" to mapOf("CONTEXT_TRACK" to 1, "PROVIDER" to 4),
     "Lcom/spotify/player/esperanto/proto/EsContextTrack\$ContextTrack;" to mapOf("URI" to 1, "UID" to 2, "METADATA" to 3),
     "Lcom/spotify/player/esperanto/proto/EsPlay\$PlayRequest;" to mapOf("PREPARE_PLAY_REQUEST" to 1),
@@ -61,6 +67,7 @@ internal val esperantoFieldNumbers = mapOf(
     "Lcom/spotify/player/esperanto/proto/EsSetShufflingContext\$SetShufflingContextRequest;" to
         mapOf("SHUFFLING_CONTEXT" to 1),
     "Lcom/spotify/player/esperanto/proto/EsAddToQueueRequest\$AddToQueueRequest;" to mapOf("TRACK" to 1),
+    "Lcom/spotify/player/esperanto/proto/EsPlayAsNextInQueueRequest\$PlayAsNextInQueueRequest;" to mapOf("TRACKS" to 1),
     "Lcom/spotify/player/esperanto/proto/EsSetQueueRequest\$SetQueueRequest;" to
         mapOf("NEXT_TRACKS" to 1, "QUEUE_REVISION" to 3),
     "Lcom/spotify/player/esperanto/proto/EsResponseWithReasons\$ResponseWithReasons;" to mapOf("ERROR" to 1),
@@ -68,14 +75,21 @@ internal val esperantoFieldNumbers = mapOf(
     "Lspotify/playlist/esperanto/proto/PlaylistQuery;" to
         mapOf("BOOL_PREDICATES" to 1, "RANGE" to 4, "SHOW_UNAVAILABLE" to 8),
     "Lspotify/playlist/esperanto/proto/PlaylistRange;" to mapOf("START" to 1, "LENGTH" to 2),
-    "Lcom/spotify/playlist/policy/proto/PlaylistRequestDecorationPolicy;" to mapOf("PLAYLIST" to 1, "ITEM" to 4),
+    "Lcom/spotify/playlist/policy/proto/PlaylistRequestDecorationPolicy;" to
+        mapOf("PLAYLIST" to 1, "TRACK" to 2, "ITEM" to 4),
     "Lcom/spotify/playlist/policy/proto/PlaylistDecorationPolicy;" to mapOf("UNRANGED_LENGTH" to 49),
-    "Lcom/spotify/playlist/policy/proto/PlaylistItemDecorationPolicy;" to mapOf("URI" to 1),
+    "Lcom/spotify/playlist/policy/proto/PlaylistTrackDecorationPolicy;" to mapOf("TRACK" to 1),
+    "Lcom/spotify/cosmos/util/policy/proto/TrackDecorationPolicy;" to mapOf("PLAYABLE" to 5, "IS_LOCAL" to 13),
+    "Lcom/spotify/playlist/policy/proto/PlaylistItemDecorationPolicy;" to mapOf("URI" to 1, "ROW_ID" to 9),
     "Lspotify/playlist/esperanto/proto/PlaylistGetResponse;" to mapOf("STATUS" to 1, "DATA" to 2),
     "Lspotify/playlist/esperanto/proto/ResponseStatus;" to mapOf("STATUS_CODE" to 1),
     "Lcom/spotify/playlist/proto/PlaylistRequest\$Response;" to
         mapOf("ITEM" to 1, "UNRANGED_LENGTH" to 4, "LOADING_CONTENTS" to 6),
-    "Lcom/spotify/playlist/proto/PlaylistRequest\$Item;" to mapOf("URI" to 18),
+    "Lcom/spotify/playlist/proto/PlaylistRequest\$Item;" to
+        mapOf("TRACK_METADATA" to 4, "ROW_ID" to 7, "TRACK_PLAY_STATE" to 8, "URI" to 18),
+    "Lcom/spotify/cosmos/util/proto/TrackMetadata;" to mapOf("PLAYABLE" to 6, "IS_LOCAL" to 11),
+    "Lcom/spotify/cosmos/util/proto/TrackPlayState;" to mapOf("IS_PLAYABLE" to 1, "PLAYABILITY_RESTRICTION" to 2),
+    "Lcom/spotify/settings/esperanto/proto/SettingsOuterClass\$SettingsState;" to mapOf("SHOW_UNAVAILABLE_TRACKS" to 17),
     "Lcom/spotify/metadata/esperanto/proto/GetEntityRequest;" to mapOf("URI" to 1),
     "Lcom/spotify/metadata/esperanto/proto/GetEntityResponse;" to mapOf("ITEM" to 1),
     "Lcom/spotify/metadata/cosmos/proto/MetadataCosmos\$MetadataItem;" to mapOf("ALBUM" to 3),

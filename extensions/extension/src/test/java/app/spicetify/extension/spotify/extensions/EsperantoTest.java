@@ -3,6 +3,7 @@ package app.spicetify.extension.spotify.extensions;
 import static org.junit.Assert.assertArrayEquals;
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertFalse;
+import static org.junit.Assert.assertNull;
 import static org.junit.Assert.assertTrue;
 import static org.junit.Assert.fail;
 
@@ -24,15 +25,43 @@ public class EsperantoTest {
         assertEquals("uid-1", parsed.trackUid);
         assertEquals(Arrays.asList("spotify:artist:a1", "spotify:artist:a2"), parsed.artistUris);
         assertFalse(parsed.advertisement);
-        assertEquals("playback-1", parsed.playbackId);
+        // playback_id is bytes, which the app shows as lowercase hex (Lp/v3w;->apply 193 to 211).
+        assertEquals("0abc7f", parsed.playbackId);
         assertTrue(parsed.paused);
         assertEquals(7L, parsed.queueRevision);
+        assertTrue(parsed.nextTracks.isEmpty());
+    }
+
+    @Test
+    public void parseStateReadsTheNextTracksAndLeavesTheCurrentOneAlone() throws IOException {
+        Wire.Writer now = contextTrack("spotify:track:now", "uid-now");
+        now.message(3, metadataEntry("artist_uri", "spotify:artist:now"));
+        Wire.Writer next = contextTrack("spotify:track:a", "uid-a");
+        next.message(3, metadataEntry("artist_uri", "spotify:artist:a")); // not the current track's artist
+        Wire.Writer state = new Wire.Writer();
+        state.message(7, providedTrack(now));
+        state.message(20, providedTrack(contextTrack("spotify:track:before", "uid-before")));
+        state.message(21, providedTrack(next));
+        state.message(21, providedTrack(contextTrack("spotify:track:b", "uid-b")));
+        state.varint(25, 3);
+
+        Esperanto.PlayerState parsed = Esperanto.parseState(state.toByteArray());
+
+        assertEquals("spotify:track:now", parsed.trackUri);
+        assertEquals("uid-now", parsed.trackUid);
+        assertEquals(Arrays.asList("spotify:artist:now"), parsed.artistUris);
+        assertEquals(2, parsed.nextTracks.size());
+        assertEquals("spotify:track:a", parsed.nextTracks.get(0).uri);
+        assertEquals("uid-a", parsed.nextTracks.get(0).uid);
+        assertEquals("spotify:track:b", parsed.nextTracks.get(1).uri);
+        assertEquals("uid-b", parsed.nextTracks.get(1).uid);
+        assertEquals(3L, parsed.queueRevision);
     }
 
     /**
      * A {@code ContextPlayerState} playing {@code trackUri} (uid {@code uid-1}) in
      * {@code spotify:playlist:p}: artists {@code a1} and {@code a2} plus a blank third,
-     * {@code is_advertisement=false}, playback {@code playback-1}, paused, queue revision 7.
+     * {@code is_advertisement=false}, playback id bytes {@code 0a bc 7f}, paused, queue revision 7.
      * Other tests send it as a state body.
      */
     static byte[] contextPlayerState(String trackUri) {
@@ -50,10 +79,23 @@ public class EsperantoTest {
         Wire.Writer state = new Wire.Writer();
         state.string(2, "spotify:playlist:p");
         state.message(7, providedTrack);
-        state.string(8, "playback-1");
+        state.bytes(8, new byte[] {0x0a, (byte) 0xbc, 0x7f});
         state.bool(14, true);
         state.varint(25, 7);
         return state.toByteArray();
+    }
+
+    /**
+     * A {@code ContextPlayerError} with {@code code} for {@code trackUri} in {@code spotify:playlist:p},
+     * with {@code reasons}. Other tests send it as an error body.
+     */
+    static byte[] contextPlayerError(int code, String trackUri, String reasons) {
+        Wire.Writer error = new Wire.Writer();
+        error.varint(1, code);
+        error.message(3, metadataEntry("track_uri", trackUri));
+        error.message(3, metadataEntry("context_uri", "spotify:playlist:p"));
+        error.message(3, metadataEntry("reasons", reasons));
+        return error.toByteArray();
     }
 
     private static Wire.Writer metadataEntry(String key, String value) {
@@ -61,6 +103,20 @@ public class EsperantoTest {
         entry.string(1, key);
         entry.string(2, value);
         return entry;
+    }
+
+    private static Wire.Writer contextTrack(String uri, String uid) {
+        Wire.Writer contextTrack = new Wire.Writer();
+        contextTrack.string(1, uri);
+        contextTrack.string(2, uid);
+        return contextTrack;
+    }
+
+    private static Wire.Writer providedTrack(Wire.Writer contextTrack) {
+        Wire.Writer providedTrack = new Wire.Writer();
+        providedTrack.message(1, contextTrack);
+        providedTrack.string(4, "context");
+        return providedTrack;
     }
 
     // ---- Episodes ----
@@ -98,9 +154,15 @@ public class EsperantoTest {
     // ---- Request builders ----
 
     @Test
+    public void getStateCapsThePreviousTracksAtNoneAndTheNextAtThree() {
+        // GetStateRequest{1 prev_tracks_cap{1 0}, 2 next_tracks_cap{1 3}}, each an OptionalInt64
+        assertArrayEquals(hexToBytes("0a020800" + "12020803"), Esperanto.getState());
+    }
+
+    @Test
     public void simpleCommandsEncodeTheirFields() throws IOException {
         assertEquals(0, Esperanto.skipNext().length);
-        assertEquals(0, Esperanto.getState().length);
+        assertEquals("GetErrorRequest has no fields", 0, Esperanto.getError().length);
 
         byte[] shuffleOn = Esperanto.setShuffling(true);
         assertEquals(1L, varintField(shuffleOn, 1));
@@ -171,6 +233,19 @@ public class EsperantoTest {
     }
 
     @Test
+    public void playAsNextInQueueSendsEachTrackByUriInOrder() throws IOException {
+        byte[] request = Esperanto.playAsNextInQueue(Arrays.asList("spotify:track:a", "spotify:track:b"));
+
+        // PlayAsNextInQueueRequest{1 tracks: [ContextTrack{1 uri}]}, and no options or logging params
+        List<byte[]> tracks = repeatedNestedBytes(request, 1);
+        assertEquals(2, tracks.size());
+        assertEquals("spotify:track:a", stringField(tracks.get(0), 1));
+        assertEquals("spotify:track:b", stringField(tracks.get(1), 1));
+        assertTrue(repeatedNestedBytes(request, 2).isEmpty());
+        assertTrue(repeatedNestedBytes(request, 3).isEmpty());
+    }
+
+    @Test
     public void playlistGetBuildsQueryAndPolicy() throws IOException {
         byte[] request = Esperanto.playlistGet("spotify:playlist:p", 10, 5, false);
         assertEquals("spotify:playlist:p", stringField(request, 1));
@@ -204,6 +279,38 @@ public class EsperantoTest {
         byte[] range = nestedBytes(query, 4);
         assertEquals(0L, varintField(range, 1));
         assertEquals(0L, varintField(range, 2));
+    }
+
+    @Test
+    public void playlistPlayabilityListsUnavailableSongsTooWithTheirPlayability() throws IOException {
+        byte[] request = Esperanto.playlistPlayability("spotify:playlist:p", 500, 500);
+        assertEquals("spotify:playlist:p", stringField(request, 1));
+
+        byte[] query = nestedBytes(request, 2);
+        assertArrayEquals(new byte[] {4, 3, 7, 6}, nestedBytes(query, 1));
+        assertEquals("show_unavailable", 1L, varintField(query, 8));
+        byte[] range = nestedBytes(query, 4);
+        assertEquals(500L, varintField(range, 1));
+        assertEquals(500L, varintField(range, 2));
+
+        byte[] policy = nestedBytes(request, 3);
+        assertEquals(Arrays.asList(1, 2, 4), fieldNumbers(policy));
+        assertEquals(1L, varintField(nestedBytes(policy, 1), 49));
+        // policy{2 track{1 track{5 playable, 13 is_local}}}: a track field the policy doesn't ask for isn't filled.
+        byte[] track = nestedBytes(nestedBytes(policy, 2), 1);
+        assertEquals(Arrays.asList(5, 13), fieldNumbers(track));
+        assertEquals(1L, varintField(track, 5));
+        assertEquals(1L, varintField(track, 13));
+        byte[] item = nestedBytes(policy, 4);
+        assertEquals("uri and row_id", Arrays.asList(1, 9), fieldNumbers(item));
+        assertEquals(1L, varintField(item, 1));
+        assertEquals(1L, varintField(item, 9));
+
+        // The listing Shuffle+ and Play a random song use stays as it was.
+        byte[] plain = Esperanto.playlistGet("spotify:playlist:p", 500, 500, false);
+        assertEquals(0L, varintField(nestedBytes(plain, 2), 8));
+        assertEquals(Arrays.asList(1, 4), fieldNumbers(nestedBytes(plain, 3)));
+        assertEquals(Arrays.asList(1), fieldNumbers(nestedBytes(nestedBytes(plain, 3), 4)));
     }
 
     @Test
@@ -251,6 +358,71 @@ public class EsperantoTest {
         assertEquals(Arrays.asList("spotify:track:a", "spotify:track:b"), page.uris);
         assertEquals(42, page.length);
         assertTrue(page.loading);
+    }
+
+    @Test
+    public void parsePlaylistGetReadsEachItemsRowIdAndPlayability() throws IOException {
+        // Item{7 row_id, 18 uri, 4 track_metadata{6 playable, 11 is_local},
+        //     8 track_play_state{1 is_playable, 2 playability_restriction}}
+        Wire.Writer greyedMetadata = new Wire.Writer();
+        greyedMetadata.bool(6, false);
+        greyedMetadata.string(4, "a name the parse skips");
+        Wire.Writer greyedState = new Wire.Writer();
+        greyedState.bool(1, false);
+        greyedState.varint(2, 4); // NOT_IN_CATALOGUE
+        Wire.Writer greyed = new Wire.Writer();
+        greyed.string(7, "row-greyed");
+        greyed.message(4, greyedMetadata);
+        greyed.message(8, greyedState);
+        greyed.string(18, "spotify:track:greyed");
+
+        Wire.Writer localMetadata = new Wire.Writer();
+        localMetadata.bool(6, true);
+        localMetadata.bool(11, true);
+        Wire.Writer local = new Wire.Writer();
+        local.string(18, "spotify:local:a:b:c:1");
+        local.string(7, "row-local");
+        local.message(4, localMetadata);
+
+        // Without track_play_state, or with it but no is_playable, the app counts the item as playable.
+        Wire.Writer noPlayable = new Wire.Writer();
+        noPlayable.varint(2, 1); // NO_RESTRICTION
+        Wire.Writer quiet = new Wire.Writer();
+        quiet.string(18, "spotify:track:quiet");
+        quiet.message(8, noPlayable);
+
+        Wire.Writer status = new Wire.Writer();
+        status.varint(1, 200);
+        Wire.Writer data = new Wire.Writer();
+        data.message(1, greyed);
+        data.message(1, local);
+        data.message(1, quiet);
+        data.varint(4, 3);
+        Wire.Writer response = new Wire.Writer();
+        response.message(1, status);
+        response.message(2, data);
+
+        Esperanto.PlaylistPage page = Esperanto.parsePlaylistGet(response.toByteArray());
+
+        assertEquals(Arrays.asList("spotify:track:greyed", "spotify:local:a:b:c:1", "spotify:track:quiet"), page.uris);
+        assertEquals(3, page.items.size());
+        Esperanto.PlaylistItem first = page.items.get(0);
+        assertEquals("spotify:track:greyed", first.uri);
+        assertEquals("row-greyed", first.rowId);
+        assertFalse(first.playable);
+        assertFalse(first.isPlayable);
+        assertEquals(4, first.restriction);
+        assertFalse(first.local);
+        Esperanto.PlaylistItem second = page.items.get(1);
+        assertEquals("row-local", second.rowId);
+        assertTrue(second.playable);
+        assertTrue(second.isPlayable);
+        assertEquals("UNKNOWN, the enum's default", 0, second.restriction);
+        assertTrue(second.local);
+        Esperanto.PlaylistItem third = page.items.get(2);
+        assertNull(third.rowId);
+        assertTrue(third.isPlayable);
+        assertEquals(1, third.restriction);
     }
 
     private static Esperanto.PlaylistPage parsePlaylistGetWithStatus(int statusCode) throws IOException {
@@ -398,6 +570,56 @@ public class EsperantoTest {
     }
 
     @Test
+    public void parseErrorReadsTheCodeTheMessageAndTheDataTheAppReads() throws IOException {
+        // ContextPlayerError{1 code, 2 message, 3 data: map<string, string>}
+        Wire.Writer error = new Wire.Writer();
+        error.varint(1, 20); // ONE_TRACK_UNPLAYABLE_AUTO_STOPPED
+        error.string(2, "Track is unavailable");
+        error.message(3, metadataEntry("track_uri", "spotify:track:x"));
+        error.message(3, metadataEntry("context_uri", "spotify:playlist:p"));
+        error.message(3, metadataEntry("reasons", "not_available_in_current_region"));
+        error.message(3, metadataEntry("playback_error", "ignored while reasons is there"));
+        error.message(3, metadataEntry("other", "skipped"));
+
+        Esperanto.PlayerError parsed = Esperanto.parseError(error.toByteArray());
+
+        assertEquals(20, parsed.code);
+        assertEquals("Track is unavailable", parsed.message);
+        assertEquals("spotify:track:x", parsed.trackUri);
+        assertEquals("spotify:playlist:p", parsed.contextUri);
+        assertEquals("not_available_in_current_region", parsed.reasons);
+    }
+
+    @Test
+    public void parseErrorTakesPlaybackErrorWhenThereAreNoReasonsAsTheAppDoes() throws IOException {
+        Wire.Writer error = new Wire.Writer();
+        error.varint(1, 19);
+        error.message(3, metadataEntry("playback_error", "not_available"));
+        Esperanto.PlayerError parsed = Esperanto.parseError(error.toByteArray());
+        assertEquals(19, parsed.code);
+        assertEquals("not_available", parsed.reasons);
+        assertEquals("", parsed.message);
+        assertNull(parsed.trackUri);
+        assertNull(parsed.contextUri);
+
+        assertNull(Esperanto.parseError(new byte[0]).reasons);
+        assertEquals("SUCCESS, the enum's default", 0, Esperanto.parseError(new byte[0]).code);
+    }
+
+    @Test
+    public void parseShowUnavailableTracksReadsSettingsField17() throws IOException {
+        Wire.Writer on = new Wire.Writer();
+        on.bool(1, false); // offline_mode
+        on.bool(17, true);
+        on.varint(28, 1);
+        assertTrue(Esperanto.parseShowUnavailableTracks(on.toByteArray()));
+
+        Wire.Writer off = new Wire.Writer();
+        off.bool(1, true);
+        assertFalse("absent is false", Esperanto.parseShowUnavailableTracks(off.toByteArray()));
+    }
+
+    @Test
     public void parseResultReturnsTheErrorCode() throws IOException {
         Wire.Writer forbidden = new Wire.Writer();
         forbidden.varint(1, 1);
@@ -456,6 +678,17 @@ public class EsperantoTest {
             }
         }
         return values;
+    }
+
+    /** The field numbers at the top level of {@code data}, in wire order. */
+    private static List<Integer> fieldNumbers(byte[] data) throws IOException {
+        List<Integer> numbers = new ArrayList<>();
+        Wire.Reader reader = new Wire.Reader(data);
+        while (reader.next()) {
+            numbers.add(reader.field());
+            reader.skip();
+        }
+        return numbers;
     }
 
     static long varintField(byte[] data, int field) throws IOException {
