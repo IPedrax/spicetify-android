@@ -2,7 +2,9 @@ package app.spicetify.extension.spotify.theme;
 
 import android.app.AlertDialog;
 import android.content.Context;
+import android.content.res.ColorStateList;
 import android.graphics.Color;
+import android.graphics.Typeface;
 import android.os.Handler;
 import android.os.Looper;
 import android.text.InputType;
@@ -13,6 +15,7 @@ import android.widget.Button;
 import android.widget.EditText;
 import android.widget.LinearLayout;
 import android.widget.Switch;
+import android.widget.TextView;
 import android.widget.Toast;
 import app.spicetify.extension.spotify.settings.SpicetifySettingsScreen;
 import java.io.IOException;
@@ -20,38 +23,46 @@ import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 
-/** The Theme part of the Spicetify settings screen. */
+/**
+ * The top of the Spicetify settings screen: the Marketplace button, then the Theme section with the
+ * current theme. It also holds the dialogs that apply a theme, which the Marketplace uses.
+ */
 public final class ThemeSection {
-    private static final String[][] PRESETS = {
-            {ThemePresets.STOCK, "Spotify default"},
-            {ThemePresets.AMOLED, "AMOLED black"},
-            {ThemePresets.MATERIAL_YOU, "Material You"},
-            {ThemePresets.MATERIAL_YOU_BLACK, "Material You, black background"},
-    };
-
     private ThemeSection() {}
 
     /**
-     * @param context   the settings screen's themed context
-     * @param onApplied runs after a theme was applied, to close the screen and recreate Spotify's activity
+     * The Marketplace button, then the current theme, and the blur switch while an image is set. On
+     * Android 13 and older, only why there are no themes.
+     *
+     * @param context         the settings screen's themed context
+     * @param onApplied       runs after a theme was applied, to close the screen and recreate Spotify's activity
+     * @param openMarketplace opens the Marketplace, which starts on its Themes tab
      */
-    public static View create(Context context, boolean supported, Runnable onApplied) {
+    public static View create(Context context, boolean supported, Runnable onApplied, Runnable openMarketplace) {
         LinearLayout section = new LinearLayout(context);
         section.setOrientation(LinearLayout.VERTICAL);
+        if (supported) {
+            Button marketplace = addButton(section, "Spicetify Marketplace", openMarketplace);
+            marketplace.setBackgroundTintList(ColorStateList.valueOf(MarketplaceScreen.GREEN));
+            marketplace.setTextColor(Color.BLACK);
+            marketplace.setTypeface(null, Typeface.BOLD);
+        }
         section.addView(SpicetifySettingsScreen.text(context, "Theme", true));
         if (!supported) {
             section.addView(SpicetifySettingsScreen.text(
                     context, "In-app themes need Android 14 or later.", false));
             return section;
         }
-        section.addView(SpicetifySettingsScreen.text(
-                context, "Current theme: " + ThemeState.load(context).label, false));
-        for (String[] preset : PRESETS) {
-            addButton(section, preset[1], () ->
-                    apply(context, ThemeState.Selection.preset(preset[0], preset[1]), null, onApplied));
-        }
-        addButton(section, "Spicetify Marketplace", () -> MarketplaceScreen.open(context, onApplied));
-        addButton(section, "Paste a Spicetify theme", () -> paste(context, onApplied));
+        ThemeState.Selection current = ThemeState.load(context);
+        LinearLayout card = new LinearLayout(context);
+        card.setOrientation(LinearLayout.VERTICAL);
+        MarketplaceScreen.paintStrip(MarketplaceScreen.addStrip(card), current);
+        TextView title = SpicetifySettingsScreen.text(context, name(current), false);
+        title.setTextColor(Color.WHITE);
+        title.setTextSize(16);
+        card.addView(title);
+        SpicetifySettingsScreen.onTap(card, openMarketplace);
+        section.addView(card);
         if (ThemeBackground.hasImage(context)) {
             Switch blur = new Switch(context);
             blur.setText("Blur background image");
@@ -68,6 +79,17 @@ public final class ThemeSection {
         section.addView(SpicetifySettingsScreen.text(
                 context, "Some colors change after Spotify restarts.", false));
         return section;
+    }
+
+    /**
+     * A theme's name in settings. A scheme, saved by {@link #applyScheme} as "Galaxy V2 (Galaxy)",
+     * reads "Galaxy V2, scheme Galaxy"; a preset keeps its label.
+     */
+    static String name(ThemeState.Selection theme) {
+        // ponytail: the scheme is the last " (", so a scheme name with " (" of its own splits there.
+        int open = theme.label.lastIndexOf(" (");
+        if (!ThemeState.SCHEME.equals(theme.kind) || open < 0 || !theme.label.endsWith(")")) return theme.label;
+        return theme.label.substring(0, open) + ", scheme " + theme.label.substring(open + 2, theme.label.length() - 1);
     }
 
     /**
@@ -94,22 +116,24 @@ public final class ThemeSection {
         }
     }
 
-    static void addButton(LinearLayout section, String label, Runnable action) {
+    static Button addButton(LinearLayout section, String label, Runnable action) {
         Button button = new Button(section.getContext());
         button.setText(label);
         button.setAllCaps(false);
         button.setOnClickListener(view -> {
             try {
                 action.run();
-            } catch (RuntimeException e) {
+            } catch (Throwable e) {
                 Log.w("Spicetify", label + " failed", e);
             }
         });
         section.addView(button, new LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
+        return button;
     }
 
-    private static void paste(Context context, Runnable onApplied) {
+    /** Asks for a pasted color.ini or CSS and an optional accent key, then applies one of its schemes. */
+    static void paste(Context context, Runnable onApplied) {
         LinearLayout form = new LinearLayout(context);
         form.setOrientation(LinearLayout.VERTICAL);
         EditText text = new EditText(context);
@@ -129,6 +153,9 @@ public final class ThemeSection {
                         chooseScheme(context, schemes, accent.getText().toString(), "Pasted theme", null, onApplied);
                     } catch (ThemeException e) {
                         error(context, e.getMessage());
+                    } catch (Throwable e) {
+                        // Anything else would reach Spotify through the dialog's click handling.
+                        Log.w("Spicetify", "Couldn't apply the pasted theme", e);
                     }
                 }).show();
     }

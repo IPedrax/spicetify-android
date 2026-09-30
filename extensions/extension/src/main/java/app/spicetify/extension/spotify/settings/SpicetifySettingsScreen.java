@@ -7,9 +7,11 @@ import android.content.Context;
 import android.content.res.ColorStateList;
 import android.graphics.Color;
 import android.graphics.Typeface;
+import android.util.Log;
 import android.util.TypedValue;
 import android.view.ContextThemeWrapper;
 import android.view.Gravity;
+import android.view.View;
 import android.view.ViewGroup;
 import android.view.WindowManager;
 import android.widget.Button;
@@ -20,7 +22,9 @@ import android.widget.Switch;
 import android.widget.TextView;
 import android.widget.Toast;
 import app.spicetify.extension.spotify.extensions.Extensions;
+import app.spicetify.extension.spotify.extensions.PlayerBridge;
 import app.spicetify.extension.spotify.home.HomePins;
+import app.spicetify.extension.spotify.theme.MarketplaceScreen;
 import app.spicetify.extension.spotify.theme.ThemeRuntime;
 import app.spicetify.extension.spotify.theme.ThemeSection;
 import java.util.ArrayList;
@@ -40,17 +44,29 @@ public final class SpicetifySettingsScreen {
 
     private final Context context;
     private final Activity host;
+    private final MarketplaceOpener marketplace;
 
-    private SpicetifySettingsScreen(Activity activity) {
+    /** Opens the Marketplace, as {@link MarketplaceScreen#open} does; {@code onClosed} runs once it closes. */
+    interface MarketplaceOpener {
+        void open(Context context, Runnable onApplied, Runnable onClosed);
+    }
+
+    private SpicetifySettingsScreen(Activity activity, MarketplaceOpener marketplace) {
         // The deleted Activity set Theme.Material; Spotify's own theme restyles framework widgets.
         this.context = new ContextThemeWrapper(activity, android.R.style.Theme_Material);
         this.host = activity;
+        this.marketplace = marketplace;
     }
 
     public static void open(Activity activity) {
+        open(activity, MarketplaceScreen::open);
+    }
+
+    /** Spicetify settings whose Marketplace button and current theme open {@code marketplace}. */
+    static void open(Activity activity, MarketplaceOpener marketplace) {
         // Showing a dialog on a finishing activity throws, which would crash Spotify again.
         if (activity.isFinishing() || activity.isDestroyed()) return;
-        new SpicetifySettingsScreen(activity).show();
+        new SpicetifySettingsScreen(activity, marketplace).show();
     }
 
     private void show() {
@@ -99,6 +115,28 @@ public final class SpicetifySettingsScreen {
 
         boolean sharingInstalled = InstalledPatches.cleanSharing();
         boolean themeInstalled = InstalledPatches.themeColors();
+        LinearLayout extensions = new LinearLayout(context);
+        extensions.setOrientation(LinearLayout.VERTICAL);
+        if (themeInstalled) {
+            Runnable onApplied = () -> {
+                // Recreating the activity reloads its resources with the new overlay.
+                dialog.dismiss();
+                host.recreate();
+            };
+            // The Marketplace button first, then the current theme. Both open the Marketplace, and
+            // closing it lists the extensions again, since one may have been switched there.
+            content.addView(ThemeSection.create(context, ThemeRuntime.supported(context), onApplied,
+                    () -> marketplace.open(context, onApplied, () -> {
+                        if (InstalledPatches.extensions()) listExtensions(extensions);
+                    })));
+        }
+
+        if (InstalledPatches.extensions()) {
+            content.addView(text(context, "Extensions", true));
+            listExtensions(extensions);
+            content.addView(extensions);
+        }
+
         if (sharingInstalled) {
             Switch cleanSharing = new Switch(context);
             cleanSharing.setText("Clean sharing links");
@@ -111,25 +149,11 @@ public final class SpicetifySettingsScreen {
                     new int[] {Color.rgb(30, 215, 96), Color.LTGRAY}));
             cleanSharing.setChecked(PatchSettings.cleanSharingEnabled());
             cleanSharing.setOnCheckedChangeListener((button, enabled) ->
-                    PatchSettings.setCleanSharingEnabled(enabled));
+                    guarded(() -> PatchSettings.setCleanSharingEnabled(enabled)));
             content.addView(cleanSharing, new LinearLayout.LayoutParams(
                     ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
             content.addView(text(context, "Remove tracking parameters from Spotify links you share. "
                     + "Timestamps and playback context are preserved. Changes apply immediately.", false));
-        }
-
-        if (themeInstalled) {
-            content.addView(ThemeSection.create(context, ThemeRuntime.supported(context), () -> {
-                // Recreating the activity reloads its resources with the new overlay.
-                dialog.dismiss();
-                host.recreate();
-            }));
-        }
-
-        if (InstalledPatches.extensions()) {
-            content.addView(text(context, "Extensions", true));
-            for (String line : Extensions.statusLines()) content.addView(text(context, line, false));
-            content.addView(text(context, "Turn extensions on in the Spicetify Marketplace.", false));
         }
 
         if (InstalledPatches.homePins()) {
@@ -138,7 +162,7 @@ public final class SpicetifySettingsScreen {
                     + "Return to Home once to load the choices. Restart Spotify after changing pins.", false));
             Button choose = new Button(context);
             choose.setText("Choose pinned shortcuts");
-            choose.setOnClickListener(view -> chooseHomePins());
+            choose.setOnClickListener(view -> guarded(this::chooseHomePins));
             content.addView(choose);
         }
 
@@ -151,6 +175,36 @@ public final class SpicetifySettingsScreen {
             content.addView(text(context, "No configurable Spicetify patches are installed.", false));
         }
         return content;
+    }
+
+    /**
+     * Fills {@code list} with the player bridge's line while it has a problem, then a row for each
+     * extension that is on: its title and latest status. A row opens the extension's Marketplace
+     * dialog, and its switch there fills the list again.
+     */
+    private void listExtensions(LinearLayout list) {
+        list.removeAllViews();
+        String problem = PlayerBridge.problemLine();
+        if (problem != null) list.addView(text(context, problem, false));
+        List<String> on = Extensions.enabled(context);
+        if (on.isEmpty()) {
+            list.addView(text(context,
+                    "No extensions are on. Turn them on in the Marketplace's Extensions tab.", false));
+        }
+        for (String id : on) {
+            LinearLayout row = new LinearLayout(context);
+            row.setOrientation(LinearLayout.VERTICAL);
+            TextView title = text(context, Extensions.title(id), false);
+            title.setTextColor(Color.WHITE);
+            title.setTextSize(16);
+            title.setPadding(0, dp(8), 0, 0);
+            row.addView(title);
+            TextView status = text(context, Extensions.latestStatus(id), false);
+            status.setPadding(0, 0, 0, dp(8));
+            row.addView(status);
+            onTap(row, () -> MarketplaceScreen.openExtension(context, id, () -> listExtensions(list)));
+            list.addView(row);
+        }
     }
 
     private void chooseHomePins() {
@@ -177,7 +231,7 @@ public final class SpicetifySettingsScreen {
                 .setNegativeButton("Cancel", null)
                 .setPositiveButton("Save", null).create();
         picker.setOnShowListener(ignored -> picker.getButton(AlertDialog.BUTTON_POSITIVE)
-                .setOnClickListener(button -> {
+                .setOnClickListener(button -> guarded(() -> {
                     List<String> ids = new ArrayList<>();
                     for (int i = 0; i < choices.size(); i++) if (selected[i]) ids.add(choices.get(i).id);
                     try {
@@ -189,7 +243,7 @@ public final class SpicetifySettingsScreen {
                     picker.dismiss();
                     new AlertDialog.Builder(context).setMessage("Pins saved. Restart Spotify to refresh Home.")
                             .setPositiveButton("OK", null).show();
-                }));
+                })));
         picker.show();
     }
 
@@ -202,6 +256,26 @@ public final class SpicetifySettingsScreen {
         view.setPadding(0, padding, 0, padding);
         if (heading) view.setTypeface(null, Typeface.BOLD);
         return view;
+    }
+
+    /**
+     * Makes {@code row} ripple when tapped and run {@code action}. A failure is logged instead of
+     * reaching Spotify.
+     */
+    public static void onTap(View row, Runnable action) {
+        TypedValue ripple = new TypedValue();
+        row.getContext().getTheme().resolveAttribute(android.R.attr.selectableItemBackground, ripple, true);
+        row.setBackgroundResource(ripple.resourceId);
+        row.setOnClickListener(view -> guarded(action));
+    }
+
+    /** Runs a tap or a switch's change, logging a failure instead of letting it reach Spotify. */
+    private static void guarded(Runnable action) {
+        try {
+            action.run();
+        } catch (Throwable e) {
+            Log.w("Spicetify", "A Spicetify settings action failed", e);
+        }
     }
 
     private int dp(int value) {

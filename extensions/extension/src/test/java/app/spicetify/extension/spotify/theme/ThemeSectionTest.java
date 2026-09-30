@@ -16,8 +16,13 @@ import android.widget.TextView;
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
+import java.util.Arrays;
+import java.util.Collections;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicInteger;
 import org.junit.Test;
 import org.junit.runner.RunWith;
 import org.robolectric.RobolectricTestRunner;
@@ -33,32 +38,73 @@ public class ThemeSectionTest {
     private final Context context = new ContextThemeWrapper(RuntimeEnvironment.getApplication(), android.R.style.Theme_Material);
 
     @Test
-    public void explainsTheAndroidRequirementWhenUnsupported() {
-        List<String> texts = texts(ThemeSection.create(context, false, () -> {}));
-        assertTrue(texts.contains("In-app themes need Android 14 or later."));
-        assertFalse(texts.contains("AMOLED black"));
+    public void explainsTheAndroidRequirementWhenUnsupported() throws IOException {
+        ThemeBackground.save(context, ThemeBackgroundTest.png()); // and offers no blur switch even so
+
+        // No Marketplace button and no current theme either.
+        assertEquals(Arrays.asList("Theme", "In-app themes need Android 14 or later."),
+                texts(ThemeSection.create(context, false, () -> {}, () -> {})));
     }
 
     @Test
-    public void offersThePresetsWhenSupported() {
-        List<String> texts = texts(ThemeSection.create(context, true, () -> {}));
-        assertTrue(texts.contains("Current theme: Spotify default"));
-        assertTrue(texts.contains("Spotify default"));
-        assertTrue(texts.contains("AMOLED black"));
-        assertTrue(texts.contains("Material You"));
-        assertTrue(texts.contains("Material You, black background"));
+    public void showsTheMarketplaceButtonThenOnlyTheCurrentTheme() {
+        View section = ThemeSection.create(context, true, () -> {}, () -> {});
+
+        assertEquals(Arrays.asList("Spicetify Marketplace", "Theme", "Spotify default",
+                "Some colors change after Spotify restarts."), texts(section));
+        assertTrue(((ViewGroup) section).getChildAt(0) instanceof Button);
+        // Spotify's own colors, as on the Marketplace's Spotify default card.
+        assertEquals(Arrays.asList(0xFF121212, 0xFF282828, 0xFF1ED760, 0xFFFFFFFF),
+                MarketplaceScreenTest.colorBlocks(section));
     }
 
     @Test
-    public void offersTheSpicetifyMarketplace() {
-        assertNotNull(button(ThemeSection.create(context, true, () -> {}), "Spicetify Marketplace"));
+    public void theCurrentThemeNamesItsSchemeAndShowsItsColors() {
+        Map<String, Integer> colors = new LinkedHashMap<>();
+        colors.put("main", 0xFF0B0B2B);
+        colors.put("card", 0xFF1B1B3B);
+        colors.put("button", 0xFFE0E0FF);
+        colors.put("text", 0xFFF0F0F0);
+        // As a theme with a background image saves it: main and card see-through.
+        ThemeState.save(context, new ThemeState.Selection(ThemeState.SCHEME, "Galaxy V2 (Galaxy)",
+                ThemeResolver.seeThrough(colors)));
+
+        View section = ThemeSection.create(context, true, () -> {}, () -> {});
+
+        assertTrue(texts(section).contains("Galaxy V2, scheme Galaxy"));
+        // The strip shows each color whole, not the image's gap.
+        assertEquals(Arrays.asList(0xFF0B0B2B, 0xFF1B1B3B, 0xFFE0E0FF, 0xFFF0F0F0),
+                MarketplaceScreenTest.colorBlocks(section));
+    }
+
+    @Test
+    public void aSchemeIsNamedAfterItsThemeAndAPresetByItsLabel() {
+        assertEquals("Galaxy V2, scheme Galaxy", ThemeSection.name(scheme("Galaxy V2 (Galaxy)")));
+        assertEquals("Pasted theme, scheme mocha", ThemeSection.name(scheme("Pasted theme (mocha)")));
+        // A theme's own name can have parentheses: the scheme is the last pair.
+        assertEquals("Nord (Spicetify), scheme dark", ThemeSection.name(scheme("Nord (Spicetify) (dark)")));
+        assertEquals("AMOLED black",
+                ThemeSection.name(ThemeState.Selection.preset(ThemePresets.AMOLED, "AMOLED black")));
+        assertEquals("Spotify default", ThemeSection.name(ThemeState.load(context)));
+    }
+
+    @Test
+    public void theMarketplaceButtonAndTheCurrentThemeOpenTheMarketplace() {
+        AtomicInteger opened = new AtomicInteger();
+        View section = ThemeSection.create(context, true, () -> {}, opened::incrementAndGet);
+
+        button(section, "Spicetify Marketplace").performClick();
+        assertEquals(1, opened.get());
+
+        ((View) labeled(section, "Spotify default").getParent()).performClick();
+        assertEquals(2, opened.get());
     }
 
     @Test
     public void aButtonWhoseActionFailsIsLoggedInsteadOfCrashing() {
         LinearLayout section = new LinearLayout(context);
         ThemeSection.addButton(section, "Broken", () -> {
-            throw new IllegalStateException("broken");
+            throw new NoClassDefFoundError("broken"); // an Error, as a changed Spotify class would throw
         });
         button(section, "Broken").performClick(); // would throw into Spotify's click handling without the guard
     }
@@ -66,8 +112,8 @@ public class ThemeSectionTest {
     @Test
     public void aThemeThatCantBeAppliedDoesNotCloseTheScreen() {
         AtomicBoolean applied = new AtomicBoolean();
-        View section = ThemeSection.create(context, true, () -> applied.set(true));
-        button(section, "AMOLED black").performClick();
+        ThemeSection.apply(context, ThemeState.Selection.preset(ThemePresets.AMOLED, "AMOLED black"), null,
+                () -> applied.set(true));
         assertFalse(applied.get());
 
         AlertDialog dialog = ShadowAlertDialog.getLatestAlertDialog();
@@ -139,7 +185,7 @@ public class ThemeSectionTest {
     @Test
     public void aPresetClearsTheBackgroundImage() throws IOException {
         ThemeBackground.save(context, ThemeBackgroundTest.png());
-        button(ThemeSection.create(context, true, () -> {}), "AMOLED black").performClick();
+        ThemeSection.apply(context, ThemeState.Selection.preset(ThemePresets.AMOLED, "AMOLED black"), null, () -> {});
         assertFalse(ThemeBackground.hasImage(context));
     }
 
@@ -169,9 +215,25 @@ public class ThemeSectionTest {
 
     @Test
     public void offersTheBlurSwitchOnlyWhileAnImageIsSet() throws IOException {
-        assertFalse(texts(ThemeSection.create(context, true, () -> {})).contains("Blur background image"));
+        assertFalse(texts(ThemeSection.create(context, true, () -> {}, () -> {})).contains("Blur background image"));
         ThemeBackground.save(context, ThemeBackgroundTest.png());
-        assertTrue(texts(ThemeSection.create(context, true, () -> {})).contains("Blur background image"));
+        assertTrue(texts(ThemeSection.create(context, true, () -> {}, () -> {})).contains("Blur background image"));
+    }
+
+    private static ThemeState.Selection scheme(String label) {
+        return new ThemeState.Selection(ThemeState.SCHEME, label, Collections.emptyMap());
+    }
+
+    private static TextView labeled(View view, String label) {
+        if (view instanceof TextView && ((TextView) view).getText().toString().equals(label)) return (TextView) view;
+        if (view instanceof ViewGroup) {
+            ViewGroup group = (ViewGroup) view;
+            for (int i = 0; i < group.getChildCount(); i++) {
+                TextView found = labeled(group.getChildAt(i), label);
+                if (found != null) return found;
+            }
+        }
+        return null;
     }
 
     private static List<String> texts(View view) {

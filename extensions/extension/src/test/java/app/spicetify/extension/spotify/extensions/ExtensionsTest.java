@@ -154,6 +154,25 @@ public class ExtensionsTest {
     }
 
     @Test
+    public void enabledListsTheExtensionsThatAreOnInTheSettingsOrder() {
+        context.getSharedPreferences("spicetify_extensions", Context.MODE_PRIVATE).edit()
+                .putBoolean(Extensions.HIDE_PODCASTS, true).putBoolean(Extensions.TRASH_BIN, true).commit();
+
+        assertEquals(Arrays.asList(Extensions.TRASH_BIN, Extensions.HIDE_PODCASTS), Extensions.enabled(context));
+    }
+
+    @Test
+    public void latestStatusSaysOnUntilTheExtensionReportsALine() {
+        // Ids no extension uses, so no other test can have reported for them.
+        assertEquals("on", Extensions.latestStatus("test_quiet"));
+
+        report("test_reporting", "Hid 1 item");
+        report("test_reporting", "Hid 3 items");
+
+        assertEquals("Hid 3 items", Extensions.latestStatus("test_reporting"));
+    }
+
+    @Test
     public void statusWritesTheFileOnTheLogsOwnThread() throws Exception {
         File log = new File(context.getFilesDir(), "spicetify_extensions.log");
         AtomicReference<String> writer = new AtomicReference<>();
@@ -201,6 +220,11 @@ public class ExtensionsTest {
         PatchSettings.initialize(context);
 
         assertSame(context, Extensions.appContext());
+    }
+
+    /** Keeps {@code line} as extension {@code id}'s latest status, unlogged; for tests in other packages too. */
+    public static void report(String id, String line) {
+        Extensions.status(null, id, line);
     }
 
     /**

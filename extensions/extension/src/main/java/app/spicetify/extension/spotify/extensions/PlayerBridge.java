@@ -188,17 +188,32 @@ public final class PlayerBridge {
         return lastState;
     }
 
-    /** The bridge's line in Spicetify settings, with its latest problem in parentheses. */
+    /** The bridge's full line, connected or not, with its latest problem in parentheses. */
     static String statusLine() {
-        String note = problem == null ? "" : " (" + problem + ")";
-        if (!connected()) return "Player bridge: waiting for Spotify" + note;
+        String line = problemLine();
+        if (line != null) return line;
+        Esperanto.PlayerState state = lastState;
+        if (state == null || state.trackUri == null) return "Player bridge: connected" + note();
+        return "Player bridge: connected, " + state.trackUri + note();
+    }
+
+    /**
+     * The bridge's line while it waits for Spotify or its stream failed, which Spicetify settings
+     * shows; null while it works.
+     */
+    public static String problemLine() {
+        if (!connected()) return "Player bridge: waiting for Spotify" + note();
         synchronized (LOCK) {
             // Something listens, yet no stream is open: it ended, or it couldn't open, and a reopen is due.
-            if (stream == null && !LISTENERS.isEmpty()) return "Player bridge: stream error, retrying" + note;
+            if (stream == null && !LISTENERS.isEmpty()) return "Player bridge: stream error, retrying" + note();
         }
-        Esperanto.PlayerState state = lastState;
-        if (state == null || state.trackUri == null) return "Player bridge: connected" + note;
-        return "Player bridge: connected, " + state.trackUri + note;
+        return null;
+    }
+
+    /** The latest problem in parentheses, or nothing once it's resolved. */
+    private static String note() {
+        String latest = problem;
+        return latest == null ? "" : " (" + latest + ")";
     }
 
     /**

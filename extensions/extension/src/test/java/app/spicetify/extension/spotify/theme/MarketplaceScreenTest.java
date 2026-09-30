@@ -44,6 +44,7 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.Executor;
+import java.util.concurrent.atomic.AtomicInteger;
 import org.junit.Before;
 import org.junit.Rule;
 import org.junit.Test;
@@ -74,7 +75,7 @@ public class MarketplaceScreenTest {
             new Marketplace.Repo("a", "dusk", "main", "https://github.com/a/dusk", 3);
     /** The cards pinned above the GitHub results on the Themes tab, in order. */
     private static final List<String> PINNED_TITLES = Arrays.asList("Spotify default", "AMOLED black",
-            "Material You", "Material You, black background", "Galaxy V2");
+            "Material You", "Material You, black background", "Galaxy V2", "Paste a Spicetify theme");
     private static final int PINNED = PINNED_TITLES.size();
     private static final int GALAXY = PINNED_TITLES.indexOf("Galaxy V2");
     /** Galaxy's own color.ini, in short: one scheme. */
@@ -100,6 +101,8 @@ public class MarketplaceScreenTest {
     private final List<String> requested = new ArrayList<>();
     /** Work the fetcher does when it's asked for a URL, before it answers; each runs once. */
     private final Map<String, Runnable> onRequest = new HashMap<>();
+    /** How many times the Marketplace told its caller it closed. */
+    private final AtomicInteger closed = new AtomicInteger();
 
     @Before
     public void setUp() {
@@ -153,13 +156,30 @@ public class MarketplaceScreenTest {
     private Dialog showScreen() {
         File cache = new File(tempFolder.getRoot(), "cache.json");
         MarketplaceLoader loader = new MarketplaceLoader(fetcher(), DIRECT, cache, () -> 0L);
-        MarketplaceScreen.show(screenContext, loader, previews, background, downloads, fetcher(), images, () -> {});
+        MarketplaceScreen.show(screenContext, loader, previews, background, downloads, fetcher(), images, () -> {},
+                closed::incrementAndGet);
         idle();
         return ShadowDialog.getLatestDialog();
     }
 
     private static void idle() {
         Shadows.shadowOf(Looper.getMainLooper()).idle();
+    }
+
+    /**
+     * Shows the Marketplace with nothing to load and no network, so only its built-in cards; for tests
+     * in other packages, such as Spicetify settings'. It has the shape of {@link MarketplaceScreen#open}.
+     */
+    public static void showOffline(Context context, Runnable onApplied, Runnable onClosed) {
+        Marketplace.Fetcher offline = url -> {
+            throw new FileNotFoundException(url);
+        };
+        PreviewImages.Downloader noImages = url -> {
+            throw new IOException("no images in tests");
+        };
+        File cache = new File(context.getCacheDir(), "offline_marketplace.json");
+        MarketplaceScreen.show(context, new MarketplaceLoader(offline, DIRECT, cache, () -> 0L),
+                new PreviewImages(noImages, DIRECT), DIRECT, DIRECT, offline, noImages, onApplied, onClosed);
     }
 
     private static void tap(ListView list, int position) {
@@ -246,7 +266,7 @@ public class MarketplaceScreenTest {
     }
 
     /** The colors of the visible plain color views under {@code view}, such as a preset card's strip, in order. */
-    private static List<Integer> colorBlocks(View view) {
+    static List<Integer> colorBlocks(View view) {
         List<Integer> colors = new ArrayList<>();
         if (view.getVisibility() != View.VISIBLE) return colors;
         if (view instanceof ViewGroup) {
@@ -834,7 +854,40 @@ public class MarketplaceScreenTest {
     }
 
     @Test
-    public void tappingAPresetCardAppliesItAsTheThemeSectionDoes() throws IOException {
+    public void thePasteCardFollowsGalaxyV2AndOpensThePasteDialog() {
+        putTwoThemes();
+        ListView list = find(showScreen().getWindow().getDecorView(), ListView.class);
+        assertEquals(GALAXY + 1, position(list, "Paste a Spicetify theme"));
+
+        tap(list, position(list, "Paste a Spicetify theme"));
+
+        AlertDialog paste = ShadowAlertDialog.getLatestAlertDialog();
+        assertNotNull(paste);
+        assertEquals("Paste a Spicetify theme", Shadows.shadowOf(paste).getTitle());
+        EditText colors = find(paste.getWindow().getDecorView(), EditText.class);
+        assertEquals("Paste a color.ini, or CSS with --spice-* colors", colors.getHint().toString());
+
+        // Apply still says why it can't use what was pasted.
+        colors.setText("; only a comment");
+        paste.getButton(AlertDialog.BUTTON_POSITIVE).performClick();
+        idle();
+        assertEquals("No color schemes found", latestAlertMessage());
+    }
+
+    @Test
+    public void closingTheMarketplaceTellsItsCaller() {
+        putTwoThemes();
+        Dialog marketplace = showScreen();
+        assertEquals(0, closed.get());
+
+        marketplace.dismiss();
+        idle(); // Dialog calls its dismiss listener from a posted message
+
+        assertEquals(1, closed.get());
+    }
+
+    @Test
+    public void tappingAPresetCardAppliesIt() throws IOException {
         putTwoThemes();
         ThemeBackground.save(context, ThemeBackgroundTest.png()); // from the theme before
         Dialog marketplace = showScreen();

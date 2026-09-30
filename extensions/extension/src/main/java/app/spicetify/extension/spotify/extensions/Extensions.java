@@ -254,17 +254,28 @@ public final class Extensions {
         }
     }
 
-    /** The bridge's line, then each extension that is on with its latest status, for Spicetify settings. */
+    /** The extensions that are on, in the order Spicetify settings lists them. */
+    public static List<String> enabled(Context context) {
+        List<String> on = new ArrayList<>();
+        for (String id : IDS) {
+            if (isOn(context, id)) on.add(id);
+        }
+        return on;
+    }
+
+    /** Extension {@code id}'s latest status, or "on" until it reports one. */
+    public static String latestStatus(String id) {
+        String last = STATUS.get(id);
+        return last == null ? "on" : last;
+    }
+
+    /** The bridge's line, then each extension that is on with its latest status. */
     public static List<String> statusLines() {
         List<String> lines = new ArrayList<>();
         lines.add(PlayerBridge.statusLine());
         Context context = appContext();
         if (context == null) return lines;
-        for (String id : IDS) {
-            if (!isOn(context, id)) continue;
-            String last = STATUS.get(id);
-            lines.add(title(id) + ": " + (last == null ? "on" : last));
-        }
+        for (String id : enabled(context)) lines.add(title(id) + ": " + latestStatus(id));
         return lines;
     }
 

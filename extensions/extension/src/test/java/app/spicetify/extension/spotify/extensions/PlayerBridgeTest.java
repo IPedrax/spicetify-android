@@ -450,6 +450,30 @@ public class PlayerBridgeTest {
         assertEquals("Player bridge: waiting for Spotify", Extensions.statusLines().get(0));
     }
 
+    @Test
+    public void theProblemLineIsTheBridgesLineOnlyWhileItWaitsForSpotifyOrRetriesTheStream() throws Exception {
+        router.destroyed = true;
+        assertEquals("Player bridge: waiting for Spotify", PlayerBridge.problemLine());
+        router.destroyed = false;
+        assertNull("connected", PlayerBridge.problemLine());
+
+        States states = listen(new States());
+        FakeRequest stream = router.only();
+        stream.callback.onResponse(200, EsperantoTest.contextPlayerState("spotify:track:x"));
+        states.next();
+        assertNull("connected and playing", PlayerBridge.problemLine());
+
+        FutureTask<String> retrying = new FutureTask<>(PlayerBridge::problemLine);
+        RandomSongTest.onBridge(() -> {
+            stream.callback.onError(new IllegalStateException("stream gone"));
+            PlayerBridge.post(retrying); // behind the error's handling, and before its reopen
+            return null;
+        });
+        assertEquals("Player bridge: stream error, retrying"
+                + " (The player state stream ended: java.lang.IllegalStateException: stream gone)",
+                retrying.get(5, TimeUnit.SECONDS));
+    }
+
     // ---- Spotify's router, through reflection ----
 
     @Test
@@ -527,6 +551,16 @@ public class PlayerBridgeTest {
     }
 
     // ---- Helpers ----
+
+    /**
+     * Attaches a fresh router that answers nothing, one Spotify has destroyed when {@code destroyed};
+     * for tests outside this package, since the bridge is process-wide.
+     */
+    public static void attachRouter(boolean destroyed) {
+        FakeRouter fresh = new FakeRouter();
+        fresh.destroyed = destroyed;
+        PlayerBridge.attach(fresh);
+    }
 
     private <T extends PlayerBridge.StateListener> T listen(T listener) {
         listeners.add(listener);
