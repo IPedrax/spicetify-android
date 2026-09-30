@@ -134,7 +134,8 @@ public final class Extensions {
         }
     }
 
-    private static SharedPreferences preferences(Context context) {
+    /** The switches, and options such as Hide podcasts' audiobook option. */
+    static SharedPreferences preferences(Context context) {
         return context.getApplicationContext().getSharedPreferences(PREFERENCES, Context.MODE_PRIVATE);
     }
 
@@ -201,6 +202,11 @@ public final class Extensions {
             ShufflePlus.register();
         } catch (Throwable e) {
             Log.w("Spicetify", "Couldn't register Shuffle+", e);
+        }
+        try {
+            HidePodcasts.register();
+        } catch (Throwable e) {
+            Log.w("Spicetify", "Couldn't register Hide podcasts", e);
         }
     }
 
