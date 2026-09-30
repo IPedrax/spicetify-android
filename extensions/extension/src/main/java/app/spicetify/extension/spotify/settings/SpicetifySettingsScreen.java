@@ -36,6 +36,7 @@ import app.spicetify.extension.spotify.theme.ThemeSection;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.HashSet;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
@@ -170,7 +171,7 @@ public final class SpicetifySettingsScreen {
 
         if (InstalledPatches.homePins()) {
             content.addView(text(context, "Home shortcuts", true));
-            content.addView(text(context, "Choose which shortcuts appear first when Spotify includes them on Home. "
+            content.addView(text(context, "Choose shortcuts to show first on Home, in the order you pick them. "
                     + "Restart Spotify after changing pins.", false));
             Button choose = new Button(context);
             choose.setText("Choose pinned shortcuts");
@@ -222,12 +223,14 @@ public final class SpicetifySettingsScreen {
     /**
      * The Home shortcuts picker: a search field over one checkable list of the pins, Home's tiles and
      * the library, which HomePins orders. It opens with the pins and Home's tiles, and the library
-     * joins them once the bridge reads it. Checks are kept by uri, so a search never loses one.
+     * joins them once the bridge reads it. Picks are kept by uri in the order they were ticked, after
+     * the pins in theirs, and a ticked row shows its place. A search never loses or reorders one, and
+     * Save pins them in that order.
      */
     private void chooseHomePins() {
         List<HomePins.Choice> choices = new ArrayList<>(HomePins.choices());
-        Set<String> checked = new HashSet<>();
-        for (HomePins.Choice choice : choices) if (choice.pinned) checked.add(choice.id);
+        Set<String> picked = new LinkedHashSet<>();
+        for (HomePins.Choice choice : choices) if (choice.pinned) picked.add(choice.id);
         List<HomePins.Choice> shown = new ArrayList<>();
         EditText search = new EditText(context);
         search.setHint("Search");
@@ -241,23 +244,27 @@ public final class SpicetifySettingsScreen {
             // A name that two choices share shows each one's uri too, so they can be told apart.
             Map<String, Integer> named = new HashMap<>();
             for (HomePins.Choice choice : choices) named.merge(choice.label, 1, Integer::sum);
+            List<String> order = new ArrayList<>(picked);
             String query = search.getText().toString().trim().toLowerCase(Locale.ROOT);
             shown.clear();
             List<String> texts = new ArrayList<>();
             for (HomePins.Choice choice : choices) {
                 if (!choice.label.toLowerCase(Locale.ROOT).contains(query)) continue;
                 shown.add(choice);
-                texts.add(named.get(choice.label) > 1 ? choice.label + "\n" + choice.id : choice.label);
+                String text = named.get(choice.label) > 1 ? choice.label + "\n" + choice.id : choice.label;
+                int place = order.indexOf(choice.id);
+                texts.add(place < 0 ? text : (place + 1) + ". " + text);
             }
             rows.clear();
             rows.addAll(texts);
             list.clearChoices();
-            for (int i = 0; i < shown.size(); i++) list.setItemChecked(i, checked.contains(shown.get(i).id));
+            for (int i = 0; i < shown.size(); i++) list.setItemChecked(i, picked.contains(shown.get(i).id));
         };
         show.run();
         list.setOnItemClickListener((parent, row, position, id) -> guarded(() -> {
-            if (list.isItemChecked(position)) checked.add(shown.get(position).id);
-            else checked.remove(shown.get(position).id);
+            if (list.isItemChecked(position)) picked.add(shown.get(position).id);
+            else picked.remove(shown.get(position).id);
+            show.run(); // the places after it change
         }));
         search.addTextChangedListener(new TextWatcher() {
             @Override
@@ -283,10 +290,8 @@ public final class SpicetifySettingsScreen {
                 .setPositiveButton("Save", null).create();
         picker.setOnShowListener(ignored -> picker.getButton(AlertDialog.BUTTON_POSITIVE)
                 .setOnClickListener(button -> guarded(() -> {
-                    List<String> ids = new ArrayList<>();
-                    for (HomePins.Choice choice : choices) if (checked.contains(choice.id)) ids.add(choice.id);
                     try {
-                        HomePins.setPinned(ids);
+                        HomePins.setPinned(new ArrayList<>(picked));
                     } catch (IllegalArgumentException changedSelection) {
                         Toast.makeText(context, changedSelection.getMessage(), Toast.LENGTH_LONG).show();
                         return;
@@ -302,6 +307,10 @@ public final class SpicetifySettingsScreen {
             public void loaded(List<Library.Item> items) {
                 choices.clear();
                 choices.addAll(HomePins.choices(items));
+                // A Home tile that Home dropped meanwhile can't be pinned, so its pick goes too.
+                Set<String> listed = new HashSet<>();
+                for (HomePins.Choice choice : choices) listed.add(choice.id);
+                picked.retainAll(listed);
                 note.setVisibility(View.GONE);
                 show.run();
             }

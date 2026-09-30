@@ -37,6 +37,9 @@ import static org.junit.Assert.*;
 public class HomePinsSettingsTest {
     private static final String LOADING = "Loading your library";
     private static final String UNAVAILABLE = "Your library isn't available yet";
+    private static final String A = "spotify:playlist:a";
+    private static final String B = "spotify:playlist:b";
+    private static final String C = "spotify:playlist:c";
 
     @Implements(value = InstalledPatches.class, isInAndroidSdk = false)
     public static class Capabilities {
@@ -90,7 +93,7 @@ public class HomePinsSettingsTest {
         list.performItemClick(null, 1, 1);
         search.setText("");
 
-        assertEquals(Arrays.asList("mix a", "Mix B", "Road trip"), rows(picker));
+        assertEquals(Arrays.asList("mix a", "1. Mix B", "Road trip"), rows(picker));
         assertFalse(list.isItemChecked(0));
         assertTrue("checked while filtered", list.isItemChecked(1));
         assertFalse(list.isItemChecked(2));
@@ -127,6 +130,100 @@ public class HomePinsSettingsTest {
         assertFalse(picker.isShowing());
         assertEquals("Pins saved. Restart Spotify to refresh Home.",
                 Shadows.shadowOf(ShadowAlertDialog.getLatestAlertDialog()).getMessage().toString());
+    }
+
+    @Test public void picksAreSavedInTheOrderTheyWereTickedAndHomeShowsThemSo() throws Exception {
+        View picker = openWithoutTheLibrary();
+        ListView list = find(picker, ListView.class);
+
+        list.performItemClick(null, 2, 2);
+        list.performItemClick(null, 0, 0);
+        list.performItemClick(null, 1, 1);
+
+        assertEquals(Arrays.asList("2. Alpha", "3. Bravo", "1. Charlie"), rows(picker));
+        save();
+        assertEquals(Arrays.asList(C, A, B), pinned());
+        ArrayList<Object> home = new ArrayList<>();
+        for (String uri : new String[]{A, B, C}) home.add(new p.goz0(new p.nnz0(uri, 2, uri, "", false, uri)));
+        List<String> shown = new ArrayList<>();
+        for (Object row : HomePins.plan("home-shortcuts", home)) shown.add(((p.goz0) row).a.d);
+        assertEquals("Home shows pin 1 first", Arrays.asList(C, A, B), shown);
+    }
+
+    @Test public void thePinsKeepTheirOrderAndNewPicksComeAfterThem() throws Exception {
+        View picker = openWithoutTheLibrary(B, A);
+        assertEquals(Arrays.asList("1. Bravo", "2. Alpha", "Charlie"), rows(picker));
+
+        find(picker, ListView.class).performItemClick(null, 2, 2);
+
+        assertEquals(Arrays.asList("1. Bravo", "2. Alpha", "3. Charlie"), rows(picker));
+        save();
+        assertEquals(Arrays.asList(B, A, C), pinned());
+    }
+
+    @Test public void untickingRemovesAPickAndRenumbersTheRestWhichTheNextPickerShows() throws Exception {
+        View picker = openWithoutTheLibrary(B, A, C);
+
+        find(picker, ListView.class).performItemClick(null, 0, 0);
+
+        assertEquals(Arrays.asList("Bravo", "1. Alpha", "2. Charlie"), rows(picker));
+        save();
+        assertEquals(Arrays.asList(A, C), pinned());
+        View again = openPicker();
+        awaitNote(again, UNAVAILABLE);
+        assertEquals(Arrays.asList("1. Alpha", "2. Charlie", "Bravo"), rows(again));
+    }
+
+    @Test public void aSearchNeverChangesThePickOrder() throws Exception {
+        View picker = openWithoutTheLibrary();
+        EditText search = find(picker, EditText.class);
+        ListView list = find(picker, ListView.class);
+
+        list.performItemClick(null, 2, 2);
+        search.setText("alp");
+        assertEquals(Arrays.asList("Alpha"), rows(picker));
+        list.performItemClick(null, 0, 0);
+        search.setText("");
+
+        assertEquals(Arrays.asList("2. Alpha", "Bravo", "1. Charlie"), rows(picker));
+        save();
+        assertEquals(Arrays.asList(C, A), pinned());
+    }
+
+    @Test public void aPickThatLeavesTheListWhenTheLibraryComesIsDropped() throws Exception {
+        LibraryTest.attachLibrary(new String[]{"spotify:playlist:road", "Road trip", null});
+        observe(new String[]{A, B}, new String[]{"Alpha", "Bravo"});
+        View picker = openPicker();
+        find(picker, ListView.class).performItemClick(null, 1, 1);
+        observe(new String[]{A}, new String[]{"Alpha"}); // Home refreshed without Bravo
+
+        awaitRows(picker, "Alpha", "Liked Songs", "Road trip");
+        save();
+
+        assertEquals("Pins saved. Restart Spotify to refresh Home.",
+                Shadows.shadowOf(ShadowAlertDialog.getLatestAlertDialog()).getMessage().toString());
+        assertTrue(pinned().isEmpty());
+    }
+
+    /** Opens the picker over Home's tiles Alpha, Bravo and Charlie, with no library, once {@code pins} are pinned. */
+    private View openWithoutTheLibrary(String... pins) throws Exception {
+        PlayerBridgeTest.attachRouter(true);
+        observe(new String[]{A, B, C}, new String[]{"Alpha", "Bravo", "Charlie"});
+        HomePins.setPinned(Arrays.asList(pins));
+        View picker = openPicker();
+        awaitNote(picker, UNAVAILABLE);
+        return picker;
+    }
+
+    private static void save() {
+        ShadowAlertDialog.getLatestAlertDialog().getButton(AlertDialog.BUTTON_POSITIVE).performClick();
+    }
+
+    /** The pins, in pin order. */
+    private static List<String> pinned() {
+        List<String> ids = new ArrayList<>();
+        for (HomePins.Choice choice : HomePins.choices()) if (choice.pinned) ids.add(choice.id);
+        return ids;
     }
 
     /** Opens Spicetify settings, taps "Choose pinned shortcuts", and returns the picker's views. */
