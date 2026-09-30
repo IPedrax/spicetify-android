@@ -6,7 +6,6 @@ import android.content.res.Resources;
 import android.os.Handler;
 import android.os.Looper;
 import android.util.Log;
-import java.io.IOException;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
@@ -53,27 +52,41 @@ public final class Library {
 
     /**
      * Reads the library on the bridge thread, then tells {@code callback} on the main thread. It
-     * returns at once and never throws, so a tap can call it. A library the core is still loading
-     * fails, since it may be missing playlists.
+     * returns at once and never throws, so a tap can call it. A library the core is still loading may
+     * be missing playlists, so it's asked for again, as Play a random song does, and then taken as it is.
      */
     public static void fetch(Context context, Callback callback) {
+        fetch(context, callback, RandomSong.LOADING_RETRY_MILLIS);
+    }
+
+    static void fetch(Context context, Callback callback, long loadingRetryMillis) {
         Handler main = new Handler(Looper.getMainLooper());
         try {
             String likedSongs = likedSongsTitle(context);
-            PlayerBridge.post(() -> PlayerBridge.call(Esperanto.YOUR_LIBRARY, "All", Esperanto.yourLibraryAll(),
-                    RandomSong.step(body -> {
-                        Esperanto.Library library = Esperanto.parseYourLibrary(body);
-                        if (library.loading) throw new IOException("your library is still loading");
-                        List<Item> items = items(library, likedSongs);
-                        tell(main, () -> callback.loaded(items));
-                    }, (reason, e) -> {
-                        Log.w("Spicetify", "Couldn't read the library: " + reason, e);
-                        tell(main, () -> callback.failed(reason));
-                    })));
+            PlayerBridge.post(() -> ask(main, callback, likedSongs, loadingRetryMillis, RandomSong.LOADING_RETRIES));
         } catch (Throwable e) {
             Log.w("Spicetify", "Couldn't ask for the library", e);
             tell(main, () -> callback.failed(String.valueOf(e)));
         }
+    }
+
+    /**
+     * Asks on the bridge thread. While the core is still loading the library, it asks again
+     * {@code retryMillis} later, {@code retries} more times at most, and then gives what it has.
+     */
+    private static void ask(Handler main, Callback callback, String likedSongs, long retryMillis, int retries) {
+        PlayerBridge.call(Esperanto.YOUR_LIBRARY, "All", Esperanto.yourLibraryAll(), RandomSong.step(body -> {
+            Esperanto.Library library = Esperanto.parseYourLibrary(body);
+            if (library.loading && retries > 0) {
+                PlayerBridge.postDelayed(() -> ask(main, callback, likedSongs, retryMillis, retries - 1), retryMillis);
+                return;
+            }
+            List<Item> items = items(library, likedSongs);
+            tell(main, () -> callback.loaded(items));
+        }, (reason, e) -> {
+            Log.w("Spicetify", "Couldn't read the library: " + reason, e);
+            tell(main, () -> callback.failed(reason));
+        }));
     }
 
     /**

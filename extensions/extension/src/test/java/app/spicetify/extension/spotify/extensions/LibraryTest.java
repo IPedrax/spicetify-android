@@ -13,6 +13,7 @@ import android.os.Looper;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
+import java.util.concurrent.TimeUnit;
 import org.junit.Before;
 import org.junit.Test;
 import org.junit.runner.RunWith;
@@ -124,15 +125,36 @@ public class LibraryTest {
     }
 
     @Test
-    public void aLibraryStillLoadingIsntAvailableYet() throws Exception {
+    public void aLibraryStillLoadingIsAskedAgainASecondLater() throws Exception {
         Answer answer = new Answer();
 
         Library.fetch(context, answer);
-        router.next().callback.onResponse(200, EsperantoTest.yourLibrary(true));
+        RandomSongTest.FakeRequest first = router.next();
+        long answered = System.nanoTime();
+        first.callback.onResponse(200, EsperantoTest.yourLibrary(true));
+        RandomSongTest.FakeRequest retry = router.next();
+        assertTrue("the retry waited its second", TimeUnit.NANOSECONDS.toMillis(retry.at - answered) >= 1000);
+        assertEquals(ALL, retry.uri);
+        retry.callback.onResponse(200, EsperantoTest.yourLibrary(false,
+                entity("spotify:playlist:road", "Road trip", null, PLAYLIST)));
         answer.await();
 
-        assertEquals("your library is still loading", answer.reason);
-        assertNull(answer.items);
+        assertEquals(Arrays.asList("spotify:collection:tracks", "spotify:playlist:road"), uris(answer.items));
+        assertEquals(2, router.requests.size());
+    }
+
+    @Test
+    public void afterThreeRetriesALibraryStillLoadingComesAsItIs() throws Exception {
+        Answer answer = new Answer();
+
+        Library.fetch(context, answer, 0);
+        for (int i = 0; i < 3; i++) router.next().callback.onResponse(200, EsperantoTest.yourLibrary(true));
+        router.next().callback.onResponse(200, EsperantoTest.yourLibrary(true,
+                entity("spotify:playlist:road", "Road trip", null, PLAYLIST)));
+        answer.await();
+
+        assertEquals(Arrays.asList("spotify:collection:tracks", "spotify:playlist:road"), uris(answer.items));
+        assertEquals("the first ask and 3 retries", 4, router.requests.size());
     }
 
     @Test

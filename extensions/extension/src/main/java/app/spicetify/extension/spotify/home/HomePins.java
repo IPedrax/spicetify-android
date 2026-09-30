@@ -88,7 +88,10 @@ public final class HomePins {
         for (Map.Entry<String, Pin> pin : pins.entrySet()) {
             Library.Item item = inLibrary.get(pin.getKey());
             if (item == null) continue;
-            pin.setValue(new Pin(item.title, item.image));
+            // An entry without a name or a cover keeps the stored one.
+            Pin fresh = new Pin(item.title, item.image);
+            pin.setValue(new Pin(fresh.title != null ? fresh.title : pin.getValue().title,
+                    fresh.image != null ? fresh.image : pin.getValue().image));
             refreshed = true;
         }
         if (refreshed) save(pins);

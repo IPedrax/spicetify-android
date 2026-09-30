@@ -273,6 +273,20 @@ public class HomePinsTest {
         assertEquals(Arrays.asList("New A", "B"), labels(HomePins.choices()));
     }
 
+    @Test public void aRefreshKeepsTheStoredTitleAndCoverWhereTheLibraryHasNone() throws Exception {
+        application.getSharedPreferences("spicetify_home_pins", 0).edit().putString("pins", "[{\"uri\":\"" + A
+                + "\",\"title\":\"Old A\",\"image\":\"spotify:image:a\"},{\"uri\":\"" + B
+                + "\",\"title\":\"Old B\",\"image\":\"spotify:image:b\"}]").commit();
+        HomePins.initialize(application);
+
+        List<HomePins.Choice> choices = HomePins.choices(Arrays.asList(new Library.Item(A, null, null, false),
+                new Library.Item(B, "New B", "", false)));
+
+        assertEquals(Arrays.asList("Old A", "New B"), labels(choices));
+        assertPin(saved().getJSONObject(0), A, "Old A", "spotify:image:a");
+        assertPin(saved().getJSONObject(1), B, "New B", "spotify:image:b");
+    }
+
     @Test public void pinsAreSavedWithTheTitleAndCoverTheyWereOfferedWith() throws Exception {
         HomePins.captureAndOrder(new String[]{B, C}, new String[]{"Home tile", "Chill on Home"});
         HomePins.choices(Arrays.asList(new Library.Item(A, "Road trip", "spotify:image:r", false),
