@@ -191,30 +191,6 @@ public class ExtensionMenusTest {
         assertFalse(TrashBin.isArtistTrashed("spotify:artist:z"));
     }
 
-    @Test
-    public void anyOtherIdRunsItsRegisteredActionAndAnUnknownIdDoesNothing() {
-        List<Context> ran = new ArrayList<>();
-        Extensions.registerAction("menus_test_action", ran::add);
-        Track track = new Track(new Metadata("spotify:track:a"));
-
-        ExtensionMenus.onTrackItem("menus_test_action", track);
-        ExtensionMenus.onArtistItem("menus_test_action", new Artist(new Metadata("spotify:artist:z")));
-        ExtensionMenus.onTrackItem("menus_test_unknown", track);
-
-        assertEquals(Arrays.asList(context, context), ran);
-    }
-
-    @Test
-    public void anActionThatThrowsStaysInsideTheMenus() {
-        Extensions.registerAction("menus_test_throws", ignored -> {
-            throw new IllegalStateException("boom");
-        });
-
-        // Both return normally: a tap must never throw into Spotify's click handler.
-        ExtensionMenus.onTrackItem("menus_test_throws", new Track(new Metadata("spotify:track:a")));
-        ExtensionMenus.onArtistItem("menus_test_throws", new Artist(new Metadata("spotify:artist:z")));
-    }
-
     private static List<String> rows(List<String[]> items) {
         List<String> rows = new ArrayList<>();
         for (String[] item : items) rows.add(String.join("|", item));

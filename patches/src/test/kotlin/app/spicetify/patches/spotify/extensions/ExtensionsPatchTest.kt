@@ -133,6 +133,55 @@ class ExtensionsPatchTest {
         assertFalse(isItemProvidersStore(returnVoid))
     }
 
+    @Test
+    fun `accepts the copy of Home's chips that A goes in before`() {
+        assertTrue(isChipsCopy(listOf(chips(1), copy(2)), 1))
+    }
+
+    @Test
+    fun `refuses any other place for A`() {
+        val site = listOf(chips(1), copy(2))
+        assertFalse(isChipsCopy(site, 0))
+        assertFalse(isChipsCopy(site, 2))
+        assertFalse(isChipsCopy(listOf(chips(0), copy(2)), 1))
+        assertFalse(isChipsCopy(listOf(ImmutableInstruction11x(Opcode.MOVE_RESULT, 1), copy(2)), 1))
+        assertFalse(isChipsCopy(listOf(chips(1), copy(1)), 1))
+        assertFalse(isChipsCopy(listOf(chips(1), type(Opcode.NEW_INSTANCE, 2, "Ljava/util/LinkedList;")), 1))
+        assertFalse(isChipsCopy(listOf(chips(1), type(Opcode.CONST_CLASS, 2, ARRAY_LIST)), 1))
+    }
+
+    @Test
+    fun `accepts the send of a chip tap that B goes in before, and the return B skips to`() {
+        assertTrue(isChipTapSend(listOf(sendTap(3, 2), returnObject(13)), 0, 1))
+    }
+
+    @Test
+    fun `refuses any other place for B`() {
+        val site = listOf(sendTap(3, 2), returnObject(13))
+        assertFalse(isChipTapSend(site, 1, 1))
+        assertFalse(isChipTapSend(site, 0, 0))
+        assertFalse(isChipTapSend(site, 0, 2))
+        assertFalse(isChipTapSend(listOf(sendTap(2, 3), returnObject(13)), 0, 1))
+        assertFalse(isChipTapSend(listOf(sendTap(1, 2), returnObject(13)), 0, 1))
+        assertFalse(isChipTapSend(listOf(sendTap(3, 1), returnObject(13)), 0, 1))
+        assertFalse(isChipTapSend(listOf(sendTap(3, 2, "b"), returnObject(13)), 0, 1))
+        assertFalse(isChipTapSend(listOf(sendTap(3, 2, opcode = Opcode.INVOKE_INTERFACE), returnObject(13)), 0, 1))
+        assertFalse(isChipTapSend(listOf(sendTap(3, 2), returnObject(12)), 0, 1))
+        assertFalse(isChipTapSend(listOf(sendTap(3, 2), ImmutableInstruction11x(Opcode.THROW, 13)), 0, 1))
+        assertFalse(isChipTapSend(listOf(sendTap(3, 2), returnVoid), 0, 1))
+    }
+
+    /** `move-result-object v[register]`, which takes `Lp/xqw;->a`'s chips in Home's feed mapping. */
+    private fun chips(register: Int) = ImmutableInstruction11x(Opcode.MOVE_RESULT_OBJECT, register)
+
+    /** `new-instance v[register], ArrayList`, the copy of the chips that follows. */
+    private fun copy(register: Int) = type(Opcode.NEW_INSTANCE, register, ARRAY_LIST)
+
+    /** `invoke-virtual {v[loop], v[event]}, Lp/bay;->[name]`, which sends a chip tap's event to Home's loop. */
+    private fun sendTap(loop: Int, event: Int, name: String = "invoke", opcode: Opcode = Opcode.INVOKE_VIRTUAL) =
+        ImmutableInstruction35c(opcode, 2, loop, event, 0, 0, 0,
+            ImmutableMethodReference("Lp/bay;", name, listOf("Ljava/lang/Object;"), "Ljava/lang/Object;"))
+
     /** `iput-object v[value], v[instance], Lp/sv70;->d`, the list menu's constructor storing its item providers. */
     private fun storeProviders(value: Int, instance: Int) = field(Opcode.IPUT_OBJECT, value, instance, "Lp/sv70;", "d", LIST)
 

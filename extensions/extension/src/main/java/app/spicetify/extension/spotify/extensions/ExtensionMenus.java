@@ -67,15 +67,11 @@ public final class ExtensionMenus {
         }
     }
 
-    /** A tap on track menu item {@code id}: {@code trash_song} toggles the menu's song, any other id runs that action. */
+    /** A tap on track menu item {@code id}: {@code trash_song} toggles the menu's song, and any other id does nothing. */
     public static void onTrackItem(String id, Object collectionTrack) {
         try {
             Context context = Extensions.appContext();
-            if (context == null) return;
-            if (!TRASH_SONG.equals(id)) {
-                run(context, id);
-                return;
-            }
+            if (context == null || !TRASH_SONG.equals(id)) return;
             String uri = link(collectionTrack, TRACK_METADATA);
             if (uri != null) TrashBin.setSong(context, uri, !TrashBin.isSongTrashed(uri));
         } catch (Throwable e) {
@@ -83,15 +79,11 @@ public final class ExtensionMenus {
         }
     }
 
-    /** A tap on artist menu item {@code id}: {@code trash_artist} toggles the menu's artist, any other id runs that action. */
+    /** A tap on artist menu item {@code id}: {@code trash_artist} toggles the menu's artist, and any other id does nothing. */
     public static void onArtistItem(String id, Object collectionArtist) {
         try {
             Context context = Extensions.appContext();
-            if (context == null) return;
-            if (!TRASH_ARTIST.equals(id)) {
-                run(context, id);
-                return;
-            }
+            if (context == null || !TRASH_ARTIST.equals(id)) return;
             String uri = link(collectionArtist, ARTIST_METADATA);
             if (uri != null) TrashBin.setArtist(context, uri, !TrashBin.isArtistTrashed(uri));
         } catch (Throwable e) {
@@ -123,12 +115,6 @@ public final class ExtensionMenus {
         } catch (Throwable e) {
             Log.w("Spicetify", "Playlist menu item " + id + " failed", e);
         }
-    }
-
-    /** Tasks such as a random song register their actions by id; an id nothing registered does nothing. */
-    private static void run(Context context, String id) {
-        Extensions.Action action = Extensions.action(id);
-        if (action != null) action.run(context);
     }
 
     /**

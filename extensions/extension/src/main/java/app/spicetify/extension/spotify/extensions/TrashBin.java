@@ -37,7 +37,6 @@ final class TrashBin {
     private static final String PREFERENCES = "spicetify_trash";
     private static final String SONGS_KEY = "songs";
     private static final String ARTISTS_KEY = "artists";
-    private static final String ACTION_TRASH_SONG = "trash_song";
 
     private static final Set<String> SONGS = ConcurrentHashMap.newKeySet();
     private static final Set<String> ARTISTS = ConcurrentHashMap.newKeySet();
@@ -52,7 +51,6 @@ final class TrashBin {
 
     static void register() {
         Extensions.register(Extensions.TRASH_BIN, TrashBin::controls);
-        Extensions.registerAction(ACTION_TRASH_SONG, TrashBin::trashPlayingSong);
         Extensions.onSwitch(Extensions.TRASH_BIN, TrashBin::onSwitch);
     }
 
@@ -79,11 +77,6 @@ final class TrashBin {
         lastHandledTrackUid = null;
         blockedNotified = false;
         GUARD.reset();
-    }
-
-    private static void trashPlayingSong(Context context) {
-        Esperanto.PlayerState state = PlayerBridge.lastState();
-        if (state != null && state.trackUri != null) setSong(context, state.trackUri, true);
     }
 
     // ---- Sets ----

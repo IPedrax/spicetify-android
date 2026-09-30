@@ -61,9 +61,9 @@ public final class Extensions {
     }
 
     /**
-     * Something an extension does on request, from a menu item or a button in its controls. It runs
-     * on the main thread (the menu click), so an action that waits on the bridge or the network must
-     * return at once and do its work on the bridge thread.
+     * Something an extension does on request, from the Random pill's chooser or a button in its
+     * controls. It runs on the main thread (the tap), so an action that waits on the bridge or the
+     * network must return at once and do its work on the bridge thread.
      */
     interface Action {
         void run(Context context);
@@ -154,9 +154,10 @@ public final class Extensions {
     public static String description(String id) {
         switch (id) {
             case TRASH_BIN: return "Throw songs and artists in the trash from their menus, and Spotify skips them.";
-            case RANDOM_SONG: return "Play a random song from all of Spotify, or from your library.";
-            case SHUFFLE_PLUS: return "Shuffle a playlist, album or Liked Songs in a truly random order. Long-press the"
-                    + " shuffle button in Now Playing, or open a playlist's menu and choose Shuffle+ this playlist.";
+            case RANDOM_SONG: return "Tap Random on Home, next to All, to play a random song from all of Spotify or from"
+                    + " your library.";
+            case SHUFFLE_PLUS: return "Long-press the shuffle button in Now Playing, or choose Shuffle+ this playlist in a"
+                    + " playlist's menu. It plays a playlist, album or Liked Songs in a truly random order.";
             case HIDE_PODCASTS: return "Remove podcasts and episodes from Home, Search and your Library's filters.";
             default: return null;
         }
