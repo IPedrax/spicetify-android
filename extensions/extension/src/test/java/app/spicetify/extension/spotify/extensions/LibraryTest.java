@@ -13,7 +13,9 @@ import android.os.Looper;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
+import java.util.concurrent.FutureTask;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.TimeoutException;
 import org.junit.Before;
 import org.junit.Test;
 import org.junit.runner.RunWith;
@@ -206,6 +208,23 @@ public class LibraryTest {
                 return false;
             }
         });
+    }
+
+    /**
+     * Returns once the bridge thread has done its part of a {@link Library#fetch} made before: the ask,
+     * then the answer's handling, which the ask posts and which posts the answer to the main looper; for
+     * the picker's tests, since the bridge is package-private. The bridge runs tasks in the order they fall
+     * due, ties in the order they were posted, so a probe posted now runs after the ask, and the probe it
+     * posts runs after the answer's handling. Only a hung bridge thread reaches its minute.
+     */
+    public static void awaitFetch() throws Exception {
+        FutureTask<Void> probe = new FutureTask<>(() -> null);
+        PlayerBridge.post(() -> PlayerBridge.post(probe));
+        try {
+            probe.get(60, TimeUnit.SECONDS);
+        } catch (TimeoutException e) {
+            throw new AssertionError("the bridge thread didn't finish the library fetch within 60 s");
+        }
     }
 
     /** A {@code YourLibraryDecoratedEntity}: {@code entity_info{2 name, 3 uri, 6 image}}, then an empty member {@code kind}. */

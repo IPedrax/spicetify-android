@@ -304,25 +304,22 @@ public class HomePinsSettingsTest {
         capture.invoke(null, ids, titles);
     }
 
-    /** Runs the main looper, where the library's answer lands, until the picker lists {@code expected}. */
-    private static void awaitRows(View picker, String... expected) throws InterruptedException {
-        long deadline = System.currentTimeMillis() + 5000;
-        while (!rows(picker).equals(Arrays.asList(expected))) {
-            Shadows.shadowOf(Looper.getMainLooper()).idle();
-            assertTrue("no rows " + Arrays.asList(expected) + " within 5 s: " + rows(picker),
-                    System.currentTimeMillis() < deadline);
-            Thread.sleep(10);
-        }
+    /** Lets the library's fetch end, then checks that the picker lists {@code expected}. */
+    private static void awaitRows(View picker, String... expected) throws Exception {
+        finishFetch();
+        assertEquals(Arrays.asList(expected), rows(picker));
     }
 
-    /** Runs the main looper until the picker's note reads {@code text}. */
-    private static void awaitNote(View picker, String text) throws InterruptedException {
-        long deadline = System.currentTimeMillis() + 5000;
-        while (!text.equals(note(picker).getText().toString())) {
-            Shadows.shadowOf(Looper.getMainLooper()).idle();
-            assertTrue("no note \"" + text + "\" within 5 s", System.currentTimeMillis() < deadline);
-            Thread.sleep(10);
-        }
+    /** Lets the library's fetch end, then checks the picker's note reads {@code text}. */
+    private static void awaitNote(View picker, String text) throws Exception {
+        finishFetch();
+        assertEquals(text, note(picker).getText().toString());
+    }
+
+    /** Runs the picker's library fetch to its end: its tasks on the bridge thread, then the main looper, where its answer lands. */
+    private static void finishFetch() throws Exception {
+        LibraryTest.awaitFetch();
+        Shadows.shadowOf(Looper.getMainLooper()).idle();
     }
 
     private static List<String> rows(View picker) {
