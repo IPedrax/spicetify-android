@@ -181,6 +181,9 @@ public final class MarketplaceScreen {
         pinned.add(paste);
         pinned.add(builtIn(Extensions.title(Extensions.RANDOM_SONG), Extensions.description(Extensions.RANDOM_SONG),
                 Marketplace.Kind.EXTENSION, Extensions.RANDOM_SONG));
+        pinned.add(builtIn(Extensions.title(Extensions.UNAVAILABLE_SONGS),
+                Extensions.description(Extensions.UNAVAILABLE_SONGS), Marketplace.Kind.EXTENSION,
+                Extensions.UNAVAILABLE_SONGS));
     }
 
     /** A card built into the Marketplace rather than read from GitHub: no preview, repository or stars. */

@@ -21,19 +21,23 @@ import org.json.JSONObject;
 /**
  * Finds a version of a song that plays in the user's country, for a song Spotify won't play there
  * (unavailable songs report, sections 4 and 5): the one the Web API relinks it to, else one with the
- * same ISRC, else one with the same title and first artist. Every request asks for the user's own
- * market, {@code market=from_token}, and only a candidate whose {@code is_playable} is true there is
- * taken, so Spotify still decides what plays. Only a country block looks further: a song held back
- * for Premium ({@code product}) or explicit content never does.
+ * same ISRC, else one with the same title and first artist. When the Web API answers 404 for the
+ * song, it isn't in the catalog of the user's market at all, which is the usual case for these
+ * songs. Spotify's core then describes it, as it does for the greyed-out row, and the core's
+ * alternatives to it come before the two searches. Every request asks for the user's own market,
+ * {@code market=from_token}, and only a candidate whose {@code is_playable} is true there is taken,
+ * so Spotify still decides what plays. Only a country block looks further: a song held back for
+ * Premium ({@code product}) or explicit content never does.
  * <p>
  * Each outcome is cached under the original's uri: a found version for 30 days, none for 3. A
  * lookup that can't finish caches nothing, and neither does one the Web API holds back. While a
  * 429's {@code Retry-After} lasts, {@link WebApi.Paced} fails a request at once, so a lookup answers
  * "try again" with the seconds left instead of waiting, and cached songs still resolve meanwhile.
+ * Each step tried puts a line on Unavailable songs' status, which the phone checks read.
  * <p>
  * Threading: {@link #resolve} returns at once. The cache is read and written on the bridge thread,
- * the token comes over the bridge, the requests run one after another on the Web API thread, at its
- * pace, and the callback hears the outcome on the bridge thread.
+ * the token and the core's details come over the bridge, the requests run one after another on the
+ * Web API thread, at its pace, and the callback hears the outcome on the bridge thread.
  */
 final class AvailableVersions {
     static final String LOOKING = "Looking for an available version";
@@ -128,7 +132,7 @@ final class AvailableVersions {
             @Override
             public void done(byte[] token) {
                 String bearer = new String(token, StandardCharsets.UTF_8);
-                WebApi.run(() -> PlayerBridge.post(answer(http, bearer, originalUri, cache, clock, callback)));
+                WebApi.run(() -> PlayerBridge.post(answer(http, bearer, originalUri, null, cache, clock, callback)));
             }
 
             @Override
@@ -138,11 +142,17 @@ final class AvailableVersions {
         });
     }
 
-    /** On the Web API thread: looks up, and returns what the bridge thread does with the outcome. */
-    private static Runnable answer(WebApi.Http http, String token, String originalUri, SharedPreferences cache,
-            LongSupplier clock, Callback callback) {
+    /**
+     * On the Web API thread: looks up from the Web API's answer for the song, or from {@code described},
+     * the core's, after that answer was a 404. It returns what the bridge thread does next: tell the
+     * outcome, or, on the 404, ask the core.
+     */
+    private static Runnable answer(WebApi.Http http, String token, String originalUri, Esperanto.Track described,
+            SharedPreferences cache, LongSupplier clock, Callback callback) {
         try {
-            JSONObject outcome = lookUp(http, token, originalUri);
+            JSONObject outcome = described == null ? lookUp(http, token, originalUri)
+                    : notInYourMarket(http, token, originalUri, described);
+            if (outcome == null) return () -> describe(http, token, originalUri, cache, clock, callback);
             String saved = outcome.put("at", clock.getAsLong()).toString();
             return () -> {
                 cache.edit().putString(originalUri, saved).apply();
@@ -161,6 +171,24 @@ final class AvailableVersions {
                     : e.getMessage() != null ? e.getMessage() : e.toString();
             return () -> callback.failed(COULDNT + reason, 0);
         }
+    }
+
+    /**
+     * On the bridge thread, after the Web API's 404: asks Spotify's core for the song's details,
+     * then goes back to the Web API thread with them. When the core can't give them, the lookup
+     * can't finish, and the callback says so.
+     */
+    private static void describe(WebApi.Http http, String token, String originalUri, SharedPreferences cache,
+            LongSupplier clock, Callback callback) {
+        PlayerBridge.call(Esperanto.METADATA, "GetEntity", Esperanto.getEntity(originalUri), RandomSong.step(body -> {
+            Esperanto.Track described = Esperanto.parseTrack(body);
+            step("not in your market's catalog, so Spotify describes it: "
+                    + (described.isrc.isEmpty() ? "no ISRC" : "ISRC " + described.isrc));
+            WebApi.run(() -> PlayerBridge.post(answer(http, token, originalUri, described, cache, clock, callback)));
+        }, (reason, e) -> {
+            Log.w("Spicetify", "Spotify didn't give the details of " + originalUri + ": " + reason, e);
+            callback.failed(COULDNT + "Spotify didn't give the song's details (" + reason + ")", 0);
+        }));
     }
 
     /** A cached outcome that hasn't expired, or null. */
@@ -187,34 +215,97 @@ final class AvailableVersions {
     /**
      * On the Web API thread, the steps of report section 5, each request at the Web API's pace. It
      * returns what to cache: {@code {uri, title}} for a found version, or {@code {none}} with the
-     * line. It throws when a request fails or an answer can't be read, since then it doesn't know.
+     * line, and null when the Web API answers 404 for the song, so the core describes it first. It
+     * throws when a request fails or an answer can't be read, since then it doesn't know.
      */
     private static JSONObject lookUp(WebApi.Http http, String token, String originalUri)
             throws IOException, JSONException {
-        JSONObject original = new JSONObject(http.get("https://api.spotify.com/v1/tracks/"
-                + originalUri.substring(TRACK.length()) + "?market=from_token", token));
+        JSONObject original;
+        try {
+            original = new JSONObject(http.get(trackUrl(originalUri), token));
+        } catch (WebApi.NotFound notInYourMarket) {
+            return null;
+        }
         // Relinked: the root is the instance that plays here; linked_from is deprecated (report 5.1).
         if (playsHere(original, originalUri)) return found(original);
         if (original.optBoolean("is_playable", true)) return notByCountry("playable");
         JSONObject restrictions = original.optJSONObject("restrictions");
         String reason = restrictions == null ? "" : restrictions.optString("reason");
         if (!reason.isEmpty() && !"market".equals(reason)) return notByCountry(reason);
+        return searches(http, token, originalUri, original);
+    }
 
+    /**
+     * On the Web API thread, after the 404: each of the core's alternatives in turn, taken only when
+     * Get Track in the user's market answers 200 with {@code is_playable} true, then the two searches
+     * with the core's details. Another 404 just means that alternative isn't in the market either.
+     */
+    private static JSONObject notInYourMarket(WebApi.Http http, String token, String originalUri,
+            Esperanto.Track described) throws IOException, JSONException {
+        String alternatives = "alternatives " + described.alternatives.size() + ", ";
+        // ponytail: no cap on the alternatives, asked one a second at the pace; cap them if the phone logs long lists.
+        for (String alternative : described.alternatives) {
+            JSONObject track;
+            try {
+                track = new JSONObject(http.get(trackUrl(alternative), token));
+            } catch (WebApi.NotFound notHereEither) {
+                continue;
+            }
+            if (playsHere(track, originalUri)) {
+                step(alternatives + track.optString("uri") + " plays here");
+                return found(track);
+            }
+        }
+        step(alternatives + "none playable here");
+        JSONArray artists = new JSONArray();
+        for (Esperanto.Artist artist : described.artists) {
+            artists.put(new JSONObject().put("id", artist.id).put("name", artist.name));
+        }
+        // The core's details in the Web API's shape, which the matching reads.
+        return searches(http, token, originalUri, new JSONObject().put("name", described.name)
+                .put("artists", artists).put("duration_ms", described.durationMillis)
+                .put("explicit", described.explicit).put("external_ids", new JSONObject().put("isrc", described.isrc)));
+    }
+
+    /** The ISRC search, then the title and artist search, for {@code original} in the Web API's shape. */
+    private static JSONObject searches(WebApi.Http http, String token, String originalUri, JSONObject original)
+            throws IOException, JSONException {
         JSONObject ids = original.optJSONObject("external_ids");
         String isrc = ids == null ? "" : ids.optString("isrc");
         if (!isrc.isEmpty()) {
-            JSONObject match = sameIsrc(original, originalUri, isrc,
-                    tracks(http.get(searchUrl("isrc:" + isrc), token)));
+            JSONArray tracks = tracks(http.get(searchUrl("isrc:" + isrc), token));
+            JSONObject match = searched("ISRC search", tracks, sameIsrc(original, originalUri, isrc, tracks));
             if (match != null) return found(match);
         }
         String title = withoutVersion(original.optString("name"));
         String artist = firstArtist(original).optString("name");
         if (!title.isEmpty() && !artist.isEmpty()) {
             String query = "track:\"" + title.replace("\"", "") + "\" artist:\"" + artist.replace("\"", "") + "\"";
-            JSONObject match = sameTitle(original, originalUri, tracks(http.get(searchUrl(query), token)));
+            JSONArray tracks = tracks(http.get(searchUrl(query), token));
+            JSONObject match = searched("title search", tracks, sameTitle(original, originalUri, tracks));
             if (match != null) return found(match);
         }
         return new JSONObject().put("none", NONE);
+    }
+
+    /**
+     * Puts a search's step line on the status, such as "ISRC search 0" or "title search 3, no match",
+     * and returns {@code match}.
+     */
+    private static JSONObject searched(String search, JSONArray tracks, JSONObject match) {
+        step(search + " " + tracks.length() + (match != null ? ", found " + match.optString("uri")
+                : tracks.length() > 0 ? ", no match" : ""));
+        return match;
+    }
+
+    /** One step's line on Unavailable songs' status and in the extensions log, for the phone. None holds the token. */
+    private static void step(String line) {
+        Extensions.status(Extensions.appContext(), Extensions.UNAVAILABLE_SONGS, line);
+    }
+
+    /** Get Track for {@code uri} in the user's market. */
+    private static String trackUrl(String uri) {
+        return "https://api.spotify.com/v1/tracks/" + uri.substring(TRACK.length()) + "?market=from_token";
     }
 
     private static JSONObject found(JSONObject track) throws JSONException {

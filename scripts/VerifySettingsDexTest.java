@@ -293,6 +293,10 @@ class VerifySettingsDexTest {
         reject("missing list menu interface", () -> VerifySettingsDex.classes.remove("Lp/spj;"));
         reject("missing home chip type", () -> VerifySettingsDex.classes.remove("Lp/ztx;"));
         reject("missing Home pins plan", () -> VerifySettingsDex.classes.remove(VerifySettingsDex.HOME + "HomePins;"));
+        reject("missing greyed-out row type", () -> VerifySettingsDex.classes.remove("Lp/wt70;"));
+        reject("missing greyed-out song answer",
+                () -> VerifySettingsDex.classes.remove(VerifySettingsDex.EXTENSIONS + "UnavailableSongs;"));
+        reject("missing list play request type", () -> VerifySettingsDex.classes.remove("Lp/jy70;"));
         reject("missing native target", () -> VerifySettingsDex.classes.remove("Lp/xh0;"));
         reject(
                 "missing navigator method",

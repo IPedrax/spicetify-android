@@ -27,6 +27,7 @@ public class EsperantoTest {
         assertFalse(parsed.advertisement);
         // playback_id is bytes, which the app shows as lowercase hex (Lp/v3w;->apply 193 to 211).
         assertEquals("0abc7f", parsed.playbackId);
+        assertTrue(parsed.playing);
         assertTrue(parsed.paused);
         assertEquals(7L, parsed.queueRevision);
         assertTrue(parsed.nextTracks.isEmpty());
@@ -61,8 +62,8 @@ public class EsperantoTest {
     /**
      * A {@code ContextPlayerState} playing {@code trackUri} (uid {@code uid-1}) in
      * {@code spotify:playlist:p}: artists {@code a1} and {@code a2} plus a blank third,
-     * {@code is_advertisement=false}, playback id bytes {@code 0a bc 7f}, paused, queue revision 7.
-     * Other tests send it as a state body.
+     * {@code is_advertisement=false}, playback id bytes {@code 0a bc 7f}, playing but paused, queue
+     * revision 7. Other tests send it as a state body.
      */
     static byte[] contextPlayerState(String trackUri) {
         Wire.Writer contextTrack = new Wire.Writer();
@@ -80,6 +81,7 @@ public class EsperantoTest {
         state.string(2, "spotify:playlist:p");
         state.message(7, providedTrack);
         state.bytes(8, new byte[] {0x0a, (byte) 0xbc, 0x7f});
+        state.bool(13, true);
         state.bool(14, true);
         state.varint(25, 7);
         return state.toByteArray();
@@ -218,6 +220,39 @@ public class EsperantoTest {
         byte[] skipTo = nestedBytes(options, 3);
         byte[] trackIndex = nestedBytes(skipTo, 5);
         assertEquals(0L, varintField(trackIndex, 1));
+    }
+
+    @Test
+    public void playPageSendsTheListAsOneExplicitPageFromARowAndLeavesTheUsersShuffleAlone() throws IOException {
+        Esperanto.ContextTrack a = new Esperanto.ContextTrack();
+        a.uri = "spotify:track:a";
+        a.uid = "row-a";
+        Esperanto.ContextTrack b = new Esperanto.ContextTrack();
+        b.uri = "spotify:track:b"; // an item without a row id
+        byte[] request = Esperanto.playPage("spotify:playlist:p", Arrays.asList(a, b), "row-a");
+
+        byte[] prepare = nestedBytes(request, 1);
+        assertEquals(Arrays.asList(1, 2), fieldNumbers(prepare));
+        byte[] context = nestedBytes(prepare, 1);
+        // No url, as in playOrder: the core could re-resolve the context from one and drop the page.
+        assertEquals(Arrays.asList(1, 3), fieldNumbers(context));
+        assertEquals("spotify:playlist:p", stringField(context, 3));
+        List<byte[]> pages = repeatedNestedBytes(context, 1);
+        assertEquals(1, pages.size());
+        List<byte[]> tracks = repeatedNestedBytes(pages.get(0), 1);
+        assertEquals(2, tracks.size());
+        assertEquals(Arrays.asList(1, 2), fieldNumbers(tracks.get(0)));
+        assertEquals("spotify:track:a", stringField(tracks.get(0), 1));
+        assertEquals("row-a", stringField(tracks.get(0), 2));
+        assertEquals(Arrays.asList(1), fieldNumbers(tracks.get(1)));
+        assertEquals("spotify:track:b", stringField(tracks.get(1), 1));
+
+        // skip_to{3 track_uid} and nothing else: no player_options_override, so shuffle stays the user's.
+        byte[] options = nestedBytes(prepare, 2);
+        assertEquals(Arrays.asList(3), fieldNumbers(options));
+        byte[] skipTo = nestedBytes(options, 3);
+        assertEquals(Arrays.asList(3), fieldNumbers(skipTo));
+        assertEquals("row-a", stringField(skipTo, 3));
     }
 
     @Test
@@ -462,6 +497,110 @@ public class EsperantoTest {
         assertEquals(
                 Arrays.asList("spotify:track:" + Esperanto.base62(gidA), "spotify:track:" + Esperanto.base62(gidB)),
                 uris);
+    }
+
+    @Test
+    public void getEntityRequestsASongByItsUri() throws IOException {
+        assertEquals("spotify:track:t", stringField(Esperanto.getEntity("spotify:track:t"), 1));
+    }
+
+    @Test
+    public void parseTrackReadsTheDetailsOfASongFromSpotifysCore() throws IOException {
+        Wire.Writer band = new Wire.Writer();
+        band.bytes(1, RandomSongTest.gid(7));
+        band.string(2, "The Band");
+        Wire.Writer guest = new Wire.Writer();
+        guest.string(2, "A Guest"); // no gid
+        Wire.Writer album = new Wire.Writer();
+        album.string(2, "An Album");
+
+        Wire.Writer track = new Wire.Writer();
+        track.bytes(1, RandomSongTest.gid(99));
+        track.string(2, "Song");
+        track.message(3, album);
+        track.message(4, band);
+        track.message(4, guest);
+        track.varint(7, 2 * 201_234); // a sint32, zigzag on the wire
+        track.bool(9, true);
+        track.message(10, externalId("upc", "00602547"));
+        track.message(10, externalId("isrc", "GBAYE0601498"));
+        track.message(10, externalId("isrc", "USUM71703861"));
+        track.message(13, alternative(RandomSongTest.gid(1)));
+        track.message(13, alternative(RandomSongTest.gid(2)));
+        Wire.Writer item = new Wire.Writer();
+        item.message(4, track); // MetadataItem's case 4, the song
+        Wire.Writer response = new Wire.Writer();
+        response.message(1, item);
+
+        Esperanto.Track song = Esperanto.parseTrack(response.toByteArray());
+
+        assertEquals("Song", song.name);
+        assertEquals(2, song.artists.size());
+        assertEquals("its gid as the Web API's id", Esperanto.base62(RandomSongTest.gid(7)), song.artists.get(0).id);
+        assertEquals("The Band", song.artists.get(0).name);
+        assertEquals("", song.artists.get(1).id);
+        assertEquals("A Guest", song.artists.get(1).name);
+        assertEquals(201_234, song.durationMillis);
+        assertTrue(song.explicit);
+        assertEquals("the first isrc", "GBAYE0601498", song.isrc);
+        assertEquals(Arrays.asList("spotify:track:" + Esperanto.base62(RandomSongTest.gid(1)),
+                "spotify:track:" + Esperanto.base62(RandomSongTest.gid(2))), song.alternatives);
+    }
+
+    @Test
+    public void parseTrackWithoutAnIsrcOrAlternativesLeavesThemEmpty() throws IOException {
+        Wire.Writer track = new Wire.Writer();
+        track.string(2, "Song");
+        track.message(10, externalId("upc", "00602547"));
+        Wire.Writer item = new Wire.Writer();
+        item.message(4, track);
+        Wire.Writer response = new Wire.Writer();
+        response.message(1, item);
+
+        Esperanto.Track song = Esperanto.parseTrack(response.toByteArray());
+
+        assertEquals("", song.isrc);
+        assertTrue(song.alternatives.isEmpty());
+        assertTrue(song.artists.isEmpty());
+        assertFalse(song.explicit);
+    }
+
+    @Test
+    public void parseTrackOfAnAnswerWithoutASongThrowsWithTheCoresError() {
+        Wire.Writer error = new Wire.Writer();
+        error.varint(1, 2 * 404); // MetadataItem's case 1, the core's error, a sint32
+        Wire.Writer withError = new Wire.Writer();
+        withError.message(1, error);
+        Wire.Writer album = new Wire.Writer();
+        album.message(3, new Wire.Writer());
+        Wire.Writer withAlbum = new Wire.Writer();
+        withAlbum.message(1, album);
+
+        assertParseTrackFails("error 404", withError.toByteArray());
+        assertParseTrackFails("no song in the answer", withAlbum.toByteArray());
+        assertParseTrackFails("no song in the answer", new byte[0]);
+    }
+
+    private static void assertParseTrackFails(String message, byte[] getEntityResponse) {
+        try {
+            Esperanto.parseTrack(getEntityResponse);
+            fail("expected IOException");
+        } catch (IOException expected) {
+            assertEquals(message, expected.getMessage());
+        }
+    }
+
+    private static Wire.Writer externalId(String type, String id) {
+        Wire.Writer externalId = new Wire.Writer();
+        externalId.string(1, type);
+        externalId.string(2, id);
+        return externalId;
+    }
+
+    private static Wire.Writer alternative(byte[] gid) {
+        Wire.Writer alternative = new Wire.Writer();
+        alternative.bytes(1, gid);
+        return alternative;
     }
 
     // ---- Your Library ----

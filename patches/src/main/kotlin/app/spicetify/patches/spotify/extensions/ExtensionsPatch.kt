@@ -36,6 +36,10 @@ private const val PLAYLIST_MENU_PROVIDER =
 private const val HOME_FEEDS = "Lp/qrl;"
 private const val CHIP_EVENTS = "Lp/a4v;"
 private const val HOME_CHIP_BRIDGE = "Lapp/spicetify/extension/spotify/extensions/nativebridge/HomeChipBridge;"
+private const val TRACK_ROW_TAPS = "Lp/h6e;"
+private const val UNAVAILABLE_ROW_BRIDGE =
+    "Lapp/spicetify/extension/spotify/extensions/nativebridge/UnavailableRowBridge;"
+private const val LIST_PLAY = "Lp/vy70;"
 
 // Every protobuf field number the extension's Esperanto.java writes or reads, as class#NAME_FIELD_NUMBER,
 // for the extensions and for the Home shortcuts picker, which reads Your Library's names and covers.
@@ -44,8 +48,8 @@ private const val HOME_CHIP_BRIDGE = "Lapp/spicetify/extension/spotify/extension
 // BoolPredicate, and Your Library's Filter (PLAYLIST 2, ALBUM 0) and LinkType (TRACK 4).
 internal val esperantoFieldNumbers = mapOf(
     "Lcom/spotify/player/esperanto/proto/EsContextPlayerState\$ContextPlayerState;" to mapOf(
-        "CONTEXT_URI" to 2, "TRACK" to 7, "PLAYBACK_ID" to 8, "IS_PAUSED" to 14, "NEXT_TRACKS" to 21,
-        "QUEUE_REVISION" to 25,
+        "CONTEXT_URI" to 2, "TRACK" to 7, "PLAYBACK_ID" to 8, "IS_PLAYING" to 13, "IS_PAUSED" to 14,
+        "NEXT_TRACKS" to 21, "QUEUE_REVISION" to 25,
     ),
     "Lcom/spotify/player/esperanto/proto/EsGetStateRequest\$GetStateRequest;" to
         mapOf("PREV_TRACKS_CAP" to 1, "NEXT_TRACKS_CAP" to 2),
@@ -59,7 +63,8 @@ internal val esperantoFieldNumbers = mapOf(
     "Lcom/spotify/player/esperanto/proto/EsContextPage\$ContextPage;" to mapOf("TRACKS" to 1),
     "Lcom/spotify/player/esperanto/proto/EsPreparePlayOptions\$PreparePlayOptions;" to
         mapOf("SKIP_TO" to 3, "PLAYER_OPTIONS_OVERRIDE" to 7),
-    "Lcom/spotify/player/esperanto/proto/EsSkipToTrack\$SkipToTrack;" to mapOf("TRACK_URI" to 4, "TRACK_INDEX" to 5),
+    "Lcom/spotify/player/esperanto/proto/EsSkipToTrack\$SkipToTrack;" to
+        mapOf("TRACK_UID" to 3, "TRACK_URI" to 4, "TRACK_INDEX" to 5),
     "Lcom/spotify/player/esperanto/proto/EsOptional\$OptionalInt64;" to mapOf("VALUE" to 1),
     "Lcom/spotify/player/esperanto/proto/EsContextPlayerOptions\$ContextPlayerOptionOverrides;" to
         mapOf("SHUFFLING_CONTEXT" to 1),
@@ -92,10 +97,15 @@ internal val esperantoFieldNumbers = mapOf(
     "Lcom/spotify/settings/esperanto/proto/SettingsOuterClass\$SettingsState;" to mapOf("SHOW_UNAVAILABLE_TRACKS" to 17),
     "Lcom/spotify/metadata/esperanto/proto/GetEntityRequest;" to mapOf("URI" to 1),
     "Lcom/spotify/metadata/esperanto/proto/GetEntityResponse;" to mapOf("ITEM" to 1),
-    "Lcom/spotify/metadata/cosmos/proto/MetadataCosmos\$MetadataItem;" to mapOf("ALBUM" to 3),
+    "Lcom/spotify/metadata/cosmos/proto/MetadataCosmos\$MetadataItem;" to mapOf("ERROR" to 1, "ALBUM" to 3, "TRACK" to 4),
     "Lcom/spotify/metadata/proto/Metadata\$Album;" to mapOf("DISC" to 11),
     "Lcom/spotify/metadata/proto/Metadata\$Disc;" to mapOf("TRACK" to 3),
-    "Lcom/spotify/metadata/proto/Metadata\$Track;" to mapOf("GID" to 1),
+    "Lcom/spotify/metadata/proto/Metadata\$Track;" to mapOf(
+        "GID" to 1, "NAME" to 2, "ARTIST" to 4, "DURATION" to 7, "EXPLICIT" to 9, "EXTERNAL_ID" to 10,
+        "ALTERNATIVE" to 13,
+    ),
+    "Lcom/spotify/metadata/proto/Metadata\$Artist;" to mapOf("GID" to 1, "NAME" to 2),
+    "Lcom/spotify/metadata/proto/Metadata\$ExternalId;" to mapOf("TYPE" to 1, "ID" to 2),
     "Lspotify/your_library/esperanto/proto/YourLibraryRequest;" to mapOf("HEADER" to 1),
     "Lspotify/your_library/esperanto/proto/YourLibraryRequestHeader;" to mapOf(
         "LENGTH" to 12, "FILTERS" to 14, "ALL_PLAYLISTS" to 17, "NUM_LINK_TYPES_IN_PLAYLISTS" to 25,
@@ -148,7 +158,8 @@ internal val playerBridgePatch = bytecodePatch {
 val extensionsPatch = bytecodePatch(
     name = "Spicetify extensions",
     description = "Adds Android versions of Spicetify extensions to the Spicetify Marketplace: " +
-        "Trash Bin, Play a random song, Shuffle+ and Hide podcasts. Turn each one on in the Marketplace.",
+        "Trash Bin, Play a random song, Shuffle+, Hide podcasts and Unavailable songs. " +
+        "Turn each one on in the Marketplace.",
     default = false,
 ) {
     compatibleWith(spotifyCompatibility)
@@ -225,6 +236,39 @@ val extensionsPatch = bytecodePatch(
             throw PatchException("Spotify extensions ABI changed: $CHIP_EVENTS. Use the verified Spotify 9.1.80.2221 APK.")
         }
 
+        // B1 (unavailable report, section 2.4): the default track row refuses a tap on a greyed-out song
+        // with the return at 247, right after its UBI hit at 246. The bridge gets the list's tap handler (v0,
+        // this) and the row (v11), and a true answer goes on at 248, where a playable row starts to play. That
+        // path logs the tap's UBI hit again, so a greyed tap that goes on logs two. v6 takes the answer, since
+        // 248 writes it before anything reads it.
+        val rowTap = mutableClassDefBy(TRACK_ROW_TAPS).methods.single {
+            it.name == "r" && it.parameterTypes == listOf("I", "Lp/wt70;", "Lp/lv40;", "Lp/ivj;")
+        }
+        if (!isRefusedRowReturn(rowTap.implementation!!.instructions, 247)) {
+            throw PatchException("Spotify extensions ABI changed: $TRACK_ROW_TAPS. Use the verified Spotify 9.1.80.2221 APK.")
+        }
+        // B2 (unavailable report, sections 2.2 and 2.3): with the remote flag enable_omni_play_intent_handler
+        // on, h6e.h sends every track row's tap to s, omni play, and never to r, so B1 never runs. B2 hands
+        // the bridge s's this (p0) and row (p2) at its entry, which no branch targets and no try block covers.
+        // v0 and v1 are free there, since 0 and 1 write them next. s is a coroutine, and each resume runs it
+        // again with a null row.
+        val omniTap = mutableClassDefBy(TRACK_ROW_TAPS).methods.single {
+            it.name == "s" && it.parameterTypes == listOf("I", "Lp/wt70;", "Lp/mv40;", "Lp/ivj;")
+        }
+        if (!isOmniPlayEntry(omniTap.implementation!!.instructions, 0)) {
+            throw PatchException("Spotify extensions ABI changed: $TRACK_ROW_TAPS. Use the verified Spotify 9.1.80.2221 APK.")
+        }
+        // L: on the phone, a tap on a greyed-out song passes r's check, since its row reads as playable, so B1
+        // never runs. r goes on into list play, d, whose skip to the row the core refuses with code 22. L hands
+        // the bridge d's this (p0) and request (p1) at its entry, which no branch targets and no try block
+        // covers, for every list play. It writes no register, so the 4 registers stay.
+        val listPlay = mutableClassDefBy(LIST_PLAY).methods.single {
+            it.name == "d" && it.parameterTypes == listOf("Lp/ly70;", "Lp/mb40;", "Lp/fvj;")
+        }
+        if (!isListPlayEntry(listPlay.implementation!!.instructions.getOrNull(0))) {
+            throw PatchException("Spotify extensions ABI changed: $LIST_PLAY. Use the verified Spotify 9.1.80.2221 APK.")
+        }
+
         trackMenu.addInstructions(1678, """
             invoke-static {v0, v11}, $MENU_BRIDGE->track(Ljava/util/List;Ljava/lang/Object;)Ljava/util/List;
             move-result-object v0
@@ -284,6 +328,20 @@ val extensionsPatch = bytecodePatch(
             move-result v1
             if-nez v1, :handled
         """.trimIndent(), ExternalLabel("handled", chipEvents.getInstruction(1214)))
+        rowTap.addInstructionsWithLabels(247, """
+            invoke-static {v0, v11}, $UNAVAILABLE_ROW_BRIDGE->onRefusedRow(Ljava/lang/Object;Ljava/lang/Object;)Z
+            move-result v6
+            if-eqz v6, :refuse
+            goto :play
+        """.trimIndent(),
+            ExternalLabel("refuse", rowTap.getInstruction(247)), ExternalLabel("play", rowTap.getInstruction(248)))
+        omniTap.addInstructions(0, """
+            move-object/from16 v0, p0
+            move-object/from16 v1, p2
+            invoke-static {v0, v1}, $UNAVAILABLE_ROW_BRIDGE->onOmniRow(Ljava/lang/Object;Ljava/lang/Object;)V
+        """.trimIndent())
+        listPlay.addInstructions(0,
+            "invoke-static {p0, p1}, $UNAVAILABLE_ROW_BRIDGE->onListPlay(Ljava/lang/Object;Ljava/lang/Object;)V")
         enableSetting("extensions")
     }
 }
@@ -366,6 +424,43 @@ internal fun isChipTapSend(instructions: List<Instruction>, index: Int, end: Int
         (send as FiveRegisterInstruction).registerC == 3 && send.registerD == 2 &&
         isHookSite(done, Opcode.RETURN_OBJECT) && (done as OneRegisterInstruction).registerA == 13
 }
+
+/**
+ * Whether [index] holds B1's place in `Lp/h6e;->r`: `return-object v13`, the refusal of a greyed-out row,
+ * right after `invoke-virtual {v0, v5, v3, v9}, Lp/h6e;->f`, its UBI hit on this (v0), and right before
+ * `iget-object v6, v0, Lp/h6e;->b`, where a playable row starts to play, writing v6 first.
+ */
+internal fun isRefusedRowReturn(instructions: List<Instruction>, index: Int): Boolean {
+    val hit = instructions.getOrNull(index - 1)
+    val refuse = instructions.getOrNull(index)
+    val play = instructions.getOrNull(index + 1)
+    return isHookSite(hit, Opcode.INVOKE_VIRTUAL, "$TRACK_ROW_TAPS->f(Ljava/lang/String;IZ)Lp/mb40;") &&
+        (hit as FiveRegisterInstruction).registerC == 0 &&
+        isHookSite(refuse, Opcode.RETURN_OBJECT) && (refuse as OneRegisterInstruction).registerA == 13 &&
+        isHookSite(play, Opcode.IGET_OBJECT, "$TRACK_ROW_TAPS->b:Lcom/spotify/kodiak/dataloader/DataPool;") &&
+        (play as TwoRegisterInstruction).registerA == 6 && play.registerB == 0
+}
+
+/**
+ * Whether [index] holds B2's place at the entry of `Lp/h6e;->s` (22 registers): `move-object/from16 v0,
+ * v17`, which copies this (p0), then `move-object/from16 v1, v21`, the continuation (p4). B2 goes in
+ * before them, so they write v0 and v1 right after it, before anything reads either.
+ */
+internal fun isOmniPlayEntry(instructions: List<Instruction>, index: Int): Boolean {
+    val self = instructions.getOrNull(index)
+    val continuation = instructions.getOrNull(index + 1)
+    return isHookSite(self, Opcode.MOVE_OBJECT_FROM16) && (self as TwoRegisterInstruction).registerA == 0 &&
+        self.registerB == 17 && isHookSite(continuation, Opcode.MOVE_OBJECT_FROM16) &&
+        (continuation as TwoRegisterInstruction).registerA == 1 && continuation.registerB == 21
+}
+
+/**
+ * Whether [instruction] is `iget-object v2, v2, Lp/mb40;->a:Lp/ja40;`, the first instruction of `Lp/vy70;->d`
+ * (4 registers, so this is v0 and its request v1), which L goes in before.
+ */
+internal fun isListPlayEntry(instruction: Instruction?): Boolean =
+    isHookSite(instruction, Opcode.IGET_OBJECT, "Lp/mb40;->a:Lp/ja40;") &&
+        (instruction as TwoRegisterInstruction).registerA == 2 && instruction.registerB == 2
 
 /** Whether [instruction] is `new-instance v1, Lp/krj;`, the menu model that T1 and T2 insert before. */
 internal fun isMenuModel(instruction: Instruction?): Boolean =

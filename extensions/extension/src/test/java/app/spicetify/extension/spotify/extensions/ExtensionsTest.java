@@ -35,6 +35,7 @@ public class ExtensionsTest {
         assertEquals("random_song", Extensions.RANDOM_SONG);
         assertEquals("shuffle_plus", Extensions.SHUFFLE_PLUS);
         assertEquals("hide_podcasts", Extensions.HIDE_PODCASTS);
+        assertEquals("unavailable_songs", Extensions.UNAVAILABLE_SONGS);
     }
 
     @Test
@@ -75,6 +76,10 @@ public class ExtensionsTest {
         assertEquals("Hide podcasts", Extensions.title(Extensions.HIDE_PODCASTS));
         assertEquals("Remove podcasts and episodes from Home, Search and your Library's filters.",
                 Extensions.description(Extensions.HIDE_PODCASTS));
+        assertEquals("Unavailable songs", Extensions.title(Extensions.UNAVAILABLE_SONGS));
+        // Only the tap, until playlists play available versions automatically (the plan's Task 4).
+        assertEquals("Tap a greyed-out song to try it, or play a version licensed in your country.",
+                Extensions.description(Extensions.UNAVAILABLE_SONGS));
     }
 
     @Test
@@ -158,9 +163,11 @@ public class ExtensionsTest {
     @Test
     public void enabledListsTheExtensionsThatAreOnInTheSettingsOrder() {
         context.getSharedPreferences("spicetify_extensions", Context.MODE_PRIVATE).edit()
-                .putBoolean(Extensions.HIDE_PODCASTS, true).putBoolean(Extensions.TRASH_BIN, true).commit();
+                .putBoolean(Extensions.UNAVAILABLE_SONGS, true).putBoolean(Extensions.HIDE_PODCASTS, true)
+                .putBoolean(Extensions.TRASH_BIN, true).commit();
 
-        assertEquals(Arrays.asList(Extensions.TRASH_BIN, Extensions.HIDE_PODCASTS), Extensions.enabled(context));
+        assertEquals(Arrays.asList(Extensions.TRASH_BIN, Extensions.HIDE_PODCASTS, Extensions.UNAVAILABLE_SONGS),
+                Extensions.enabled(context));
     }
 
     @Test

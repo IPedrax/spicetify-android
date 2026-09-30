@@ -33,12 +33,12 @@ public final class Extensions {
     public static final String RANDOM_SONG = "random_song";
     public static final String SHUFFLE_PLUS = "shuffle_plus";
     public static final String HIDE_PODCASTS = "hide_podcasts";
-    /** Unavailable songs. The bridge puts each player error on its line, which the phone checks read. */
+    /** Unavailable songs. The bridge also puts each player error on its line, which the phone checks read. */
     public static final String UNAVAILABLE_SONGS = "unavailable_songs";
 
     private static final String PREFERENCES = "spicetify_extensions";
     /** The Android extensions, in the order Spicetify settings lists their status. */
-    private static final String[] IDS = {TRASH_BIN, RANDOM_SONG, SHUFFLE_PLUS, HIDE_PODCASTS};
+    private static final String[] IDS = {TRASH_BIN, RANDOM_SONG, SHUFFLE_PLUS, HIDE_PODCASTS, UNAVAILABLE_SONGS};
     private static final String LOG = "spicetify_extensions.log";
     private static final int LOG_LIMIT = 256 * 1024;
     private static final int LOG_KEEP = 128 * 1024;
@@ -148,6 +148,7 @@ public final class Extensions {
             case RANDOM_SONG: return "Play a random song";
             case SHUFFLE_PLUS: return "Shuffle+";
             case HIDE_PODCASTS: return "Hide podcasts";
+            case UNAVAILABLE_SONGS: return "Unavailable songs";
             default: return null;
         }
     }
@@ -161,6 +162,7 @@ public final class Extensions {
             case SHUFFLE_PLUS: return "Long-press the shuffle button in Now Playing, or choose Shuffle+ this playlist in a"
                     + " playlist's menu. It plays a playlist, album or Liked Songs in a truly random order.";
             case HIDE_PODCASTS: return "Remove podcasts and episodes from Home, Search and your Library's filters.";
+            case UNAVAILABLE_SONGS: return "Tap a greyed-out song to try it, or play a version licensed in your country.";
             default: return null;
         }
     }
@@ -211,6 +213,11 @@ public final class Extensions {
             HidePodcasts.register();
         } catch (Throwable e) {
             Log.w("Spicetify", "Couldn't register Hide podcasts", e);
+        }
+        try {
+            UnavailableSongs.register();
+        } catch (Throwable e) {
+            Log.w("Spicetify", "Couldn't register Unavailable songs", e);
         }
     }
 

@@ -8,6 +8,7 @@ import com.android.tools.smali.dexlib2.immutable.instruction.ImmutableInstructio
 import com.android.tools.smali.dexlib2.immutable.instruction.ImmutableInstruction21c
 import com.android.tools.smali.dexlib2.immutable.instruction.ImmutableInstruction22c
 import com.android.tools.smali.dexlib2.immutable.instruction.ImmutableInstruction22x
+import com.android.tools.smali.dexlib2.immutable.instruction.ImmutableInstruction32x
 import com.android.tools.smali.dexlib2.immutable.instruction.ImmutableInstruction35c
 import com.android.tools.smali.dexlib2.immutable.reference.ImmutableFieldReference
 import com.android.tools.smali.dexlib2.immutable.reference.ImmutableMethodReference
@@ -22,6 +23,7 @@ private const val PROVIDED = "Lcom/spotify/casita/v1/resolved/Provided;"
 private const val ARRAY_LIST = "Ljava/util/ArrayList;"
 private const val BUTTON = "Landroidx/appcompat/widget/AppCompatImageButton;"
 private const val LIST = "Ljava/util/List;"
+private const val DATA_POOL = "Lcom/spotify/kodiak/dataloader/DataPool;"
 
 class ExtensionsPatchTest {
     @Test
@@ -81,6 +83,42 @@ class ExtensionsPatchTest {
             "Lcom/spotify/settings/esperanto/proto/SettingsOuterClass\$SettingsState;#SHOW_UNAVAILABLE_TRACKS" to 17,
         ).mapKeys { it.key + "_FIELD_NUMBER" }
         assertEquals(expected, esperantoFieldNumbers.filterKeys { it in expected })
+    }
+
+    @Test
+    fun `the protocol check covers skipping to a row by its uid`() {
+        val player = "Lcom/spotify/player/esperanto/proto/"
+        assertEquals(3, esperantoFieldNumbers["${player}EsSkipToTrack\$SkipToTrack;#TRACK_UID_FIELD_NUMBER"])
+        assertEquals(2, esperantoFieldNumbers["${player}EsContextTrack\$ContextTrack;#UID_FIELD_NUMBER"])
+    }
+
+    @Test
+    fun `the protocol check covers the details of a song from Spotify's core`() {
+        val item = "Lcom/spotify/metadata/cosmos/proto/MetadataCosmos\$MetadataItem;"
+        val metadata = "Lcom/spotify/metadata/proto/Metadata\$"
+        val expected = mapOf(
+            "$item#ERROR" to 1,
+            "$item#TRACK" to 4,
+            "${metadata}Track;#GID" to 1,
+            "${metadata}Track;#NAME" to 2,
+            "${metadata}Track;#ARTIST" to 4,
+            "${metadata}Track;#DURATION" to 7,
+            "${metadata}Track;#EXPLICIT" to 9,
+            "${metadata}Track;#EXTERNAL_ID" to 10,
+            "${metadata}Track;#ALTERNATIVE" to 13,
+            "${metadata}Artist;#GID" to 1,
+            "${metadata}Artist;#NAME" to 2,
+            "${metadata}ExternalId;#TYPE" to 1,
+            "${metadata}ExternalId;#ID" to 2,
+        ).mapKeys { it.key + "_FIELD_NUMBER" }
+        assertEquals(expected, esperantoFieldNumbers.filterKeys { it in expected })
+    }
+
+    @Test
+    fun `the protocol check covers whether the player is playing or paused`() {
+        val state = "Lcom/spotify/player/esperanto/proto/EsContextPlayerState\$ContextPlayerState;#"
+        assertEquals(13, esperantoFieldNumbers["${state}IS_PLAYING_FIELD_NUMBER"])
+        assertEquals(14, esperantoFieldNumbers["${state}IS_PAUSED_FIELD_NUMBER"])
     }
 
     @Test
@@ -219,6 +257,83 @@ class ExtensionsPatchTest {
         assertFalse(isChipTapSend(listOf(sendTap(3, 2), ImmutableInstruction11x(Opcode.THROW, 13)), 0, 1))
         assertFalse(isChipTapSend(listOf(sendTap(3, 2), returnVoid), 0, 1))
     }
+
+    @Test
+    fun `accepts the refusal of a greyed-out row that B1 goes in before, between the UBI hit and the play`() {
+        assertTrue(isRefusedRowReturn(listOf(hit(0), returnObject(13), dataPool(6, 0)), 1))
+    }
+
+    @Test
+    fun `refuses any other place for B1`() {
+        val site = listOf(hit(0), returnObject(13), dataPool(6, 0))
+        assertFalse(isRefusedRowReturn(site, 0))
+        assertFalse(isRefusedRowReturn(site, 2))
+        assertFalse(isRefusedRowReturn(listOf(returnObject(13), dataPool(6, 0)), 0))
+        assertFalse(isRefusedRowReturn(listOf(hit(0), returnObject(13)), 1))
+        assertFalse(isRefusedRowReturn(listOf(hit(1), returnObject(13), dataPool(6, 0)), 1))
+        assertFalse(isRefusedRowReturn(listOf(hit(0, "g"), returnObject(13), dataPool(6, 0)), 1))
+        assertFalse(isRefusedRowReturn(listOf(hit(0, opcode = Opcode.INVOKE_DIRECT), returnObject(13), dataPool(6, 0)), 1))
+        assertFalse(isRefusedRowReturn(listOf(hit(0), returnObject(12), dataPool(6, 0)), 1))
+        assertFalse(isRefusedRowReturn(listOf(hit(0), returnVoid, dataPool(6, 0)), 1))
+        assertFalse(isRefusedRowReturn(listOf(hit(0), ImmutableInstruction11x(Opcode.THROW, 13), dataPool(6, 0)), 1))
+        assertFalse(isRefusedRowReturn(listOf(hit(0), returnObject(13), dataPool(5, 0)), 1))
+        assertFalse(isRefusedRowReturn(listOf(hit(0), returnObject(13), dataPool(6, 1)), 1))
+        assertFalse(isRefusedRowReturn(listOf(hit(0), returnObject(13),
+            field(Opcode.IGET_OBJECT, 6, 0, "Lp/h6e;", "t", "Lcom/spotify/kodiak/dataloader/statement/DataStatement;")), 1))
+        assertFalse(isRefusedRowReturn(listOf(hit(0), returnObject(13),
+            field(Opcode.IPUT_OBJECT, 6, 0, "Lp/h6e;", "b", DATA_POOL)), 1))
+    }
+
+    @Test
+    fun `accepts the entry of omni play that B2 goes in before, where this and the continuation are copied`() {
+        assertTrue(isOmniPlayEntry(listOf(move(0, 17), move(1, 21)), 0))
+    }
+
+    @Test
+    fun `refuses any other place for B2`() {
+        val entry = listOf(move(0, 17), move(1, 21))
+        assertFalse(isOmniPlayEntry(entry, 1))
+        assertFalse(isOmniPlayEntry(entry, 2))
+        assertFalse(isOmniPlayEntry(emptyList(), 0))
+        assertFalse(isOmniPlayEntry(listOf(move(0, 17)), 0))
+        assertFalse(isOmniPlayEntry(listOf(move(1, 21), move(0, 17)), 0))
+        assertFalse(isOmniPlayEntry(listOf(move(2, 17), move(1, 21)), 0))
+        assertFalse(isOmniPlayEntry(listOf(move(0, 18), move(1, 21)), 0))
+        assertFalse(isOmniPlayEntry(listOf(move(0, 17), move(2, 21)), 0))
+        assertFalse(isOmniPlayEntry(listOf(move(0, 17), move(1, 19)), 0), "the row, p2, rather than the continuation")
+        assertFalse(isOmniPlayEntry(listOf(ImmutableInstruction22x(Opcode.MOVE_FROM16, 0, 17), move(1, 21)), 0))
+        assertFalse(isOmniPlayEntry(listOf(move(0, 17), ImmutableInstruction32x(Opcode.MOVE_OBJECT_16, 1, 21)), 0))
+    }
+
+    @Test
+    fun `accepts the entry of list play that L goes in before`() {
+        assertTrue(isListPlayEntry(hitPart(2, 2)))
+    }
+
+    @Test
+    fun `refuses any other instruction where L goes`() {
+        assertFalse(isListPlayEntry(null))
+        assertFalse(isListPlayEntry(hitPart(1, 2)))
+        assertFalse(isListPlayEntry(hitPart(2, 1)))
+        assertFalse(isListPlayEntry(field(Opcode.IGET_OBJECT, 2, 2, "Lp/mb40;", "b", "Lp/ja40;")))
+        assertFalse(isListPlayEntry(field(Opcode.IGET_OBJECT, 2, 2, "Lp/mb41;", "a", "Lp/ja40;")))
+        assertFalse(isListPlayEntry(field(Opcode.IPUT_OBJECT, 2, 2, "Lp/mb40;", "a", "Lp/ja40;")))
+        assertFalse(isListPlayEntry(returnVoid))
+    }
+
+    /** `iget-object v[value], v[instance], Lp/mb40;->a:Lp/ja40;`, which `Lp/vy70;->d` starts with on its UBI hit, p2. */
+    private fun hitPart(value: Int, instance: Int) = field(Opcode.IGET_OBJECT, value, instance, "Lp/mb40;", "a", "Lp/ja40;")
+
+    /** `move-object/from16 v[to], v[from]`, as `Lp/h6e;->s` starts: this (v17), then the continuation (v21). */
+    private fun move(to: Int, from: Int) = ImmutableInstruction22x(Opcode.MOVE_OBJECT_FROM16, to, from)
+
+    /** `invoke-virtual {v[list], v5, v3, v9}, Lp/h6e;->[name]`, the UBI hit `Lp/h6e;->r` logs for a refused row. */
+    private fun hit(list: Int, name: String = "f", opcode: Opcode = Opcode.INVOKE_VIRTUAL) =
+        ImmutableInstruction35c(opcode, 4, list, 5, 3, 9, 0,
+            ImmutableMethodReference("Lp/h6e;", name, listOf("Ljava/lang/String;", "I", "Z"), "Lp/mb40;"))
+
+    /** `iget-object v[value], v[list], Lp/h6e;->b`, where a playable row starts to play. */
+    private fun dataPool(value: Int, list: Int) = field(Opcode.IGET_OBJECT, value, list, "Lp/h6e;", "b", DATA_POOL)
 
     /** `move-result-object v[register]`, which takes `Lp/xqw;->a`'s chips in Home's feed mapping. */
     private fun chips(register: Int) = ImmutableInstruction11x(Opcode.MOVE_RESULT_OBJECT, register)

@@ -12,7 +12,7 @@ import java.util.TreeMap;
  * The esperanto messages the extensions send and receive over {@code sp://esperanto/<service>/
  * <method>}: request builders, response parsers and the player state value. Field numbers come
  * from the marketplace extensions research report, sections 1.2, 2.1 to 2.3 and 3.2 to 3.4, the
- * Your Library trace, section 9, and the unavailable songs report, sections 1.3, 1.4, 3.2 and 7.4.
+ * Your Library trace, section 9, and the unavailable songs report, sections 1.3, 1.4, 3.2, 5.2, 7.1 and 7.4.
  * They are checked again at patch time against the installed Spotify build.
  */
 final class Esperanto {
@@ -48,6 +48,8 @@ final class Esperanto {
         /** The id's bytes as lowercase hex, as the app shows it; null without one. */
         String playbackId;
         long queueRevision;
+        /** {@code is_playing}, false once the player has stopped. */
+        boolean playing;
         boolean paused;
         /** What plays next, as far as {@link #getState()}'s cap reaches. */
         List<ContextTrack> nextTracks = new ArrayList<>();
@@ -77,6 +79,9 @@ final class Esperanto {
                     // bytes, which the app shows as lowercase hex (Lp/v3w;->apply 193 to 211)
                     byte[] playbackId = reader.bytes();
                     if (playbackId.length > 0) state.playbackId = hex(playbackId);
+                    break;
+                case 13:
+                    state.playing = reader.varint() != 0;
                     break;
                 case 14:
                     state.paused = reader.varint() != 0;
@@ -312,6 +317,38 @@ final class Esperanto {
         options.message(7, overrides);
         prepare.message(2, options);
 
+        Wire.Writer request = new Wire.Writer();
+        request.message(1, prepare);
+        return request.toByteArray();
+    }
+
+    /**
+     * {@code Play{prepare{context{3 uri, 1 pages[{1 tracks[{1 uri, 2 uid}]}]}, options{3 skip_to{3
+     * track_uid}}}}}: {@code tracks} as the list's one explicit page, played from the track with
+     * {@code skipToUid} (unavailable report, section 7.1). Like {@link #playOrder} it has no url, and
+     * unlike it no {@code player_options_override}, so the user's shuffle stays. A track without a
+     * uid goes without one.
+     */
+    static byte[] playPage(String contextUri, List<ContextTrack> tracks, String skipToUid) {
+        Wire.Writer page = new Wire.Writer();
+        for (ContextTrack track : tracks) {
+            Wire.Writer contextTrack = new Wire.Writer();
+            contextTrack.string(1, track.uri);
+            if (track.uid != null) contextTrack.string(2, track.uid);
+            page.message(1, contextTrack);
+        }
+        Wire.Writer context = new Wire.Writer();
+        context.message(1, page);
+        context.string(3, contextUri);
+
+        Wire.Writer skipTo = new Wire.Writer();
+        skipTo.string(3, skipToUid);
+        Wire.Writer options = new Wire.Writer();
+        options.message(3, skipTo);
+
+        Wire.Writer prepare = new Wire.Writer();
+        prepare.message(1, context);
+        prepare.message(2, options);
         Wire.Writer request = new Wire.Writer();
         request.message(1, prepare);
         return request.toByteArray();
@@ -828,6 +865,122 @@ final class Esperanto {
                 track.skip();
             }
         }
+    }
+
+    /**
+     * A song as Spotify's core describes it, for the lookup of a version that plays in the user's
+     * country when the Web API doesn't list the song in their market (unavailable report, section 5.2).
+     */
+    static final class Track {
+        String name = "";
+        List<Artist> artists = new ArrayList<>();
+        int durationMillis;
+        boolean explicit;
+        /** Its first {@code external_id} of type {@code isrc}, or "" without one. */
+        String isrc = "";
+        /** Other instances of the same song, as {@code spotify:track:} uris. */
+        List<String> alternatives = new ArrayList<>();
+    }
+
+    /** One of a {@link Track}'s artists: the Web API's id for it, base62 like a track's, or "" without a gid. */
+    static final class Artist {
+        String id = "";
+        String name = "";
+    }
+
+    /**
+     * Reads a {@code GetEntityResponse{1 item}} for a song: the item's case 4, {@code Metadata$Track{2
+     * name, 4 artist[]{1 gid, 2 name}, 7 duration, 9 explicit, 10 external_id[]{1 type, 2 id}, 13
+     * alternative[]{1 gid}}}. An item with the core's error, case 1, or without a song throws.
+     */
+    static Track parseTrack(byte[] getEntityResponse) throws IOException {
+        Wire.Reader response = new Wire.Reader(getEntityResponse);
+        while (response.next()) {
+            if (response.field() != 1) {
+                response.skip();
+                continue;
+            }
+            Wire.Reader item = response.message();
+            while (item.next()) {
+                if (item.field() == 4) return readSong(item.message());
+                if (item.field() == 1) throw new IOException("error " + sint32(item.varint()));
+                item.skip();
+            }
+        }
+        throw new IOException("no song in the answer");
+    }
+
+    private static Track readSong(Wire.Reader reader) throws IOException {
+        Track song = new Track();
+        while (reader.next()) {
+            switch (reader.field()) {
+                case 2:
+                    song.name = reader.string();
+                    break;
+                case 4:
+                    song.artists.add(readArtist(reader.message()));
+                    break;
+                case 7:
+                    song.durationMillis = sint32(reader.varint());
+                    break;
+                case 9:
+                    song.explicit = reader.varint() != 0;
+                    break;
+                case 10:
+                    readExternalId(reader.message(), song);
+                    break;
+                case 13:
+                    readTrack(reader.message(), song.alternatives); // its gid as a uri, as in an album
+                    break;
+                default:
+                    reader.skip();
+            }
+        }
+        return song;
+    }
+
+    private static Artist readArtist(Wire.Reader reader) throws IOException {
+        Artist artist = new Artist();
+        while (reader.next()) {
+            switch (reader.field()) {
+                case 1:
+                    artist.id = base62(reader.bytes());
+                    break;
+                case 2:
+                    artist.name = reader.string();
+                    break;
+                default:
+                    reader.skip();
+            }
+        }
+        return artist;
+    }
+
+    /** Keeps the first {@code ExternalId{1 type, 2 id}} whose type is {@code isrc}. */
+    private static void readExternalId(Wire.Reader reader, Track song) throws IOException {
+        String type = "";
+        String id = "";
+        while (reader.next()) {
+            switch (reader.field()) {
+                case 1:
+                    type = reader.string();
+                    break;
+                case 2:
+                    id = reader.string();
+                    break;
+                default:
+                    reader.skip();
+            }
+        }
+        if (song.isrc.isEmpty() && "isrc".equalsIgnoreCase(type)) song.isrc = id;
+    }
+
+    /**
+     * A {@code sint32}, which the wire carries zigzag encoded, such as the duration and the item's
+     * error (their message info in the APK says type 15, SINT32).
+     */
+    private static int sint32(long zigzag) {
+        return (int) (zigzag >>> 1) ^ -(int) (zigzag & 1);
     }
 
     /** Encodes a 16 byte gid as 22 zero padded base62 characters, big endian. */

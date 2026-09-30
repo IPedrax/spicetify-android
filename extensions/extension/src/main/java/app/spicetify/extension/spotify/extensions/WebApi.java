@@ -35,7 +35,7 @@ final class WebApi {
 
     /**
      * A GET with a bearer token: the body of a 200 answer, or an IOException, a {@link RateLimited}
-     * for a 429. It blocks.
+     * for a 429 and a {@link NotFound} for a 404. It blocks.
      */
     interface Http {
         String get(String url, String token) throws IOException;
@@ -79,6 +79,16 @@ final class WebApi {
             super(message);
             this.retryAfterSeconds = retryAfterSeconds;
             this.quotaExceeded = quotaExceeded;
+        }
+    }
+
+    /**
+     * A 404. Get Track with a market answers it for a song that isn't in that market's catalog at all,
+     * while a song that's there but can't play answers 200 with {@code is_playable} false.
+     */
+    static final class NotFound extends IOException {
+        NotFound() {
+            super("the Web API answered HTTP 404");
         }
     }
 
@@ -255,6 +265,7 @@ final class WebApi {
             connection.setRequestProperty("Authorization", "Bearer " + token);
             int status = connection.getResponseCode();
             if (status == 429) throw rateLimited(connection);
+            if (status == HttpURLConnection.HTTP_NOT_FOUND) throw new NotFound();
             if (status != HttpURLConnection.HTTP_OK) throw new IOException("the Web API answered HTTP " + status);
             try (InputStream input = connection.getInputStream()) {
                 return read(input);

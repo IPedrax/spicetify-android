@@ -1,6 +1,7 @@
 package app.spicetify.extension.spotify.extensions;
 
 import static java.nio.charset.StandardCharsets.UTF_8;
+import static org.junit.Assert.assertArrayEquals;
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertNotNull;
@@ -8,7 +9,9 @@ import static org.junit.Assert.assertTrue;
 
 import android.content.Context;
 import android.content.SharedPreferences;
+import java.io.File;
 import java.io.IOException;
+import java.nio.file.Files;
 import java.util.ArrayDeque;
 import java.util.Arrays;
 import java.util.Collections;
@@ -46,19 +49,29 @@ public class AvailableVersionsTest {
             + "?q=track%3A%22Song%22+artist%3A%22The+Band%22&type=track&market=from_token&limit=10";
     private static final String NONE = "No available version in your country";
     private static final long DAY = TimeUnit.DAYS.toMillis(1);
+    private static final String GET_ENTITY =
+            "sp://esperanto/spotify.metadata_esperanto.proto.ClassicMetadataService/GetEntity";
+    /** The Band's gid in Spotify's core; its base62 form is the band's Web API id. */
+    private static final byte[] BAND_GID = RandomSongTest.gid(42);
+    private static final String BAND = Esperanto.base62(BAND_GID);
 
     private final Context context = RuntimeEnvironment.getApplication();
     private final List<String> sentToSpotify = new CopyOnWriteArrayList<>();
     private final FakeWebApi webApi = new FakeWebApi();
     /** The cache's clock, in milliseconds since the epoch. */
     private final AtomicLong now = new AtomicLong(1_790_000_000_000L);
+    /** The core's answer to GetEntity, a {@code GetEntityResponse}; while null, GetEntity answers status 500. */
+    private volatile byte[] entity;
+    /** Each GetEntity request's body. */
+    private final List<byte[]> describing = new CopyOnWriteArrayList<>();
 
     @Before
     public void setUp() {
         Extensions.setAppContext(context);
+        new File(context.getFilesDir(), "spicetify_extensions.log").delete();
         // The cache lives in the process's preferences, so each test starts it empty.
         preferences().edit().clear().commit();
-        // Spotify's router, as far as a lookup needs it: it answers each token request at once.
+        // Spotify's router, as far as a lookup needs it: it answers each token request and each GetEntity at once.
         PlayerBridge.attach(new CosmosRouter() {
             @Override
             public Cancel resolve(String action, String uri, byte[] body, Callback callback) {
@@ -66,6 +79,10 @@ public class AvailableVersionsTest {
                 if (WebApi.TOKEN_URI.equals(uri)) {
                     callback.onResponse(200, ("{\"accessToken\":\"" + TOKEN + "\",\"expiresIn\":3600,\"errorCode\":0}")
                             .getBytes(UTF_8));
+                } else if (GET_ENTITY.equals(uri)) {
+                    describing.add(body);
+                    byte[] answer = entity;
+                    callback.onResponse(answer == null ? 500 : 200, answer == null ? new byte[0] : answer);
                 }
                 return () -> {};
             }
@@ -180,6 +197,10 @@ public class AvailableVersionsTest {
 
         assertEquals("none " + NONE, resolve(ORIGINAL).next());
         assertEquals(Arrays.asList(TRACK_URL, ISRC_URL, TITLE_URL), webApi.urls);
+        assertEquals("after a 200, Spotify's core isn't asked", Collections.singletonList("GET " + WebApi.TOKEN_URI),
+                sentToSpotify);
+        UnavailableSongsTest.awaitLogged("ISRC search 1, no match");
+        UnavailableSongsTest.awaitLogged("title search 1, no match");
     }
 
     @Test
@@ -196,6 +217,123 @@ public class AvailableVersionsTest {
         assertEquals("none Spotify doesn't block it in your country (playable), so no other version is looked for",
                 resolve("spotify:track:plays").next());
         assertEquals("no search", 3, webApi.urls.size());
+    }
+
+    // ---- A 404: not in the catalog of the user's market, so Spotify's core describes it ----
+
+    @Test
+    public void after404TheFirstOfTheCoresAlternativesThatPlaysHereIsFoundAndCached() throws Exception {
+        webApi.answer(TRACK_URL, new WebApi.NotFound());
+        entity = described("Song", false, ISRC, RandomSongTest.gid(1), RandomSongTest.gid(2),
+                RandomSongTest.gid(3), RandomSongTest.gid(4), RandomSongTest.gid(5));
+        webApi.answer(trackUrl(1), track(id(1), "Song", false)); // greyed here too
+        webApi.answer(trackUrl(2), new WebApi.NotFound()); // missing from this market too
+        JSONObject noPlayability = track(id(3), "Song", true);
+        noPlayability.remove("is_playable");
+        webApi.answer(trackUrl(3), noPlayability);
+        webApi.answer(trackUrl(4), track(id(4), "Song (2011 Remaster)", true));
+
+        assertEquals("found spotify:track:" + id(4) + " Song (2011 Remaster)", resolve(ORIGINAL).next());
+        assertEquals("one at a time until one plays here, and no search",
+                Arrays.asList(TRACK_URL, trackUrl(1), trackUrl(2), trackUrl(3), trackUrl(4)), webApi.urls);
+        assertEquals(1, describing.size());
+        assertArrayEquals(Esperanto.getEntity(ORIGINAL), describing.get(0));
+        UnavailableSongsTest.awaitLogged("not in your market's catalog, so Spotify describes it: ISRC " + ISRC);
+        UnavailableSongsTest.awaitLogged("alternatives 5, spotify:track:" + id(4) + " plays here");
+        assertTokenNotInTheLog();
+
+        now.addAndGet(30 * DAY - 1);
+        assertEquals("cached", "found spotify:track:" + id(4) + " Song (2011 Remaster)", resolve(ORIGINAL).next());
+        assertEquals(5, webApi.urls.size());
+        assertEquals(1, describing.size());
+    }
+
+    @Test
+    public void after404WithNoAlternativeTheCoresIsrcFindsAVersionPreferringItsExplicitFlag() throws Exception {
+        webApi.answer(TRACK_URL, new WebApi.NotFound());
+        // The core's song is explicit and 200 s long, so only the second is within 5 s with the same flag.
+        entity = described("Song", true, ISRC);
+        webApi.answer(ISRC_URL, search(
+                track("clean", "Song", true),
+                track("explicit", "Song", true).put("explicit", true).put("duration_ms", 204_999)));
+
+        assertEquals("found spotify:track:explicit Song", resolve(ORIGINAL).next());
+        assertEquals(Arrays.asList(TRACK_URL, ISRC_URL), webApi.urls);
+        UnavailableSongsTest.awaitLogged("alternatives 0, none playable here");
+        UnavailableSongsTest.awaitLogged("ISRC search 2, found spotify:track:explicit");
+    }
+
+    @Test
+    public void after404OnlyATitleAndArtistMatchIsFoundByTheArtistIdFromItsGid() throws Exception {
+        webApi.answer(TRACK_URL, new WebApi.NotFound());
+        entity = described("Song - Remastered 2011", false, ISRC);
+        webApi.answer(ISRC_URL, search(track("greyedToo", "Song", false)));
+        webApi.answer(TITLE_URL, search(
+                track("live", "Song - Live at Wembley", true),
+                track("otherArtist", "Song", true).put("artists", artists("other", "Another Band")),
+                track("tooLong", "Song", true).put("duration_ms", 203_001),
+                // Not "The Band" by name, so only the id the core's gid gives matches it.
+                track("byId", "SONG", true).put("artists", artists(BAND, "Band, The"))));
+
+        assertEquals("found spotify:track:byId SONG", resolve(ORIGINAL).next());
+        assertEquals(Arrays.asList(TRACK_URL, ISRC_URL, TITLE_URL), webApi.urls);
+        UnavailableSongsTest.awaitLogged("ISRC search 1, no match");
+        UnavailableSongsTest.awaitLogged("title search 4, found spotify:track:byId");
+    }
+
+    @Test
+    public void after404WithNothingThatPlaysHereItsNoneInYourCountryCachedFor3Days() throws Exception {
+        webApi.answer(TRACK_URL, new WebApi.NotFound());
+        entity = described("Song", false, ISRC, RandomSongTest.gid(1));
+        webApi.answer(trackUrl(1), track(id(1), "Song", false));
+        webApi.answer(ISRC_URL, search());
+        webApi.answer(TITLE_URL, search(track("otherSong", "Another Song", true)));
+
+        assertEquals("none " + NONE, resolve(ORIGINAL).next());
+        assertEquals(Arrays.asList(TRACK_URL, trackUrl(1), ISRC_URL, TITLE_URL), webApi.urls);
+        assertEquals(NONE, new JSONObject(preferences().getString(ORIGINAL, "{}")).getString("none"));
+        UnavailableSongsTest.awaitLogged("alternatives 1, none playable here");
+        UnavailableSongsTest.awaitLogged("ISRC search 0");
+        UnavailableSongsTest.awaitLogged("title search 1, no match");
+        assertTokenNotInTheLog();
+
+        now.addAndGet(3 * DAY - 1);
+        assertEquals("cached", "none " + NONE, resolve(ORIGINAL).next());
+        assertEquals(4, webApi.urls.size());
+        assertEquals(1, describing.size());
+    }
+
+    @Test
+    public void after404DetailsTheCoreCantGiveEndTheLookupSayingSoAndCacheNothing() throws Exception {
+        webApi.answer(TRACK_URL, new WebApi.NotFound(), new WebApi.NotFound(), new WebApi.NotFound(),
+                track("relinked", "Song", true));
+        String couldnt = "failed Couldn't look for an available version: Spotify didn't give the song's details (";
+
+        // While entity is null, GetEntity answers status 500.
+        assertEquals(couldnt + "status 500) / 0", resolve(ORIGINAL).next());
+        Wire.Writer error = new Wire.Writer();
+        error.varint(1, 2 * 404); // MetadataItem's case 1, the core's error, a sint32
+        Wire.Writer withError = new Wire.Writer();
+        withError.message(1, error);
+        entity = withError.toByteArray();
+        assertEquals(couldnt + "error 404) / 0", resolve(ORIGINAL).next());
+        entity = new byte[] {0x0a, 0x05}; // cut short
+        assertEquals(couldnt + "Truncated message) / 0", resolve(ORIGINAL).next());
+
+        assertEquals(Arrays.asList(TRACK_URL, TRACK_URL, TRACK_URL), webApi.urls);
+        assertFalse("nothing cached", preferences().contains(ORIGINAL));
+        assertEquals("so the next one looks again", "found spotify:track:relinked Song", resolve(ORIGINAL).next());
+        assertNoTokenLogged();
+    }
+
+    @Test
+    public void after404A429StillAsksToWaitAndCachesNothing() throws Exception {
+        webApi.answer(TRACK_URL, new WebApi.NotFound());
+        entity = described("Song", false, ISRC, RandomSongTest.gid(1));
+        webApi.answer(trackUrl(1), new WebApi.RateLimited("the Web API answered HTTP 429, retry after 30 s", 30, false));
+
+        assertEquals("failed Spotify's Web API asked to wait: try again in 30 s / 30", resolve(ORIGINAL).next());
+        assertFalse(preferences().contains(ORIGINAL));
     }
 
     // ---- The cache ----
@@ -329,6 +467,55 @@ public class AvailableVersionsTest {
             String logged = item.msg + (item.throwable == null ? "" : " " + item.throwable);
             assertFalse(logged, logged.contains(TOKEN));
         }
+    }
+
+    /** The step lines went to the extensions log, so it must not hold the token either. */
+    private void assertTokenNotInTheLog() throws IOException {
+        String log = new String(Files.readAllBytes(new File(context.getFilesDir(), "spicetify_extensions.log").toPath()),
+                UTF_8);
+        assertFalse(log, log.contains(TOKEN));
+    }
+
+    /** The Web API id of the core's alternative with {@code RandomSongTest.gid(last)}. */
+    private static String id(int last) {
+        return Esperanto.base62(RandomSongTest.gid(last));
+    }
+
+    /** Get Track in the user's market, for the alternative with {@code RandomSongTest.gid(last)}. */
+    private static String trackUrl(int last) {
+        return "https://api.spotify.com/v1/tracks/" + id(last) + "?market=from_token";
+    }
+
+    /**
+     * The core's {@code GetEntityResponse} for a song, as {@link Esperanto#parseTrack} reads it:
+     * {@code name} by The Band, whose gid is {@code RandomSongTest.gid(42)}, 200 s long, explicit or
+     * not, with {@code isrc} unless it's null, and an alternative per gid in {@code alternatives}.
+     */
+    static byte[] described(String name, boolean explicit, String isrc, byte[]... alternatives) {
+        Wire.Writer band = new Wire.Writer();
+        band.bytes(1, BAND_GID);
+        band.string(2, "The Band");
+        Wire.Writer track = new Wire.Writer();
+        track.string(2, name);
+        track.message(4, band);
+        track.varint(7, 2 * 200_000); // a sint32, so zigzag: twice the value
+        track.bool(9, explicit);
+        if (isrc != null) {
+            Wire.Writer externalId = new Wire.Writer();
+            externalId.string(1, "isrc");
+            externalId.string(2, isrc);
+            track.message(10, externalId);
+        }
+        for (byte[] gid : alternatives) {
+            Wire.Writer alternative = new Wire.Writer();
+            alternative.bytes(1, gid);
+            track.message(13, alternative);
+        }
+        Wire.Writer item = new Wire.Writer();
+        item.message(4, track);
+        Wire.Writer response = new Wire.Writer();
+        response.message(1, item);
+        return response.toByteArray();
     }
 
     /** A Web API track object: by The Band, 200 s long, clean, with one ISRC. */

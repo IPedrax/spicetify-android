@@ -174,6 +174,20 @@ public class WebApiTest {
     }
 
     @Test
+    public void theRealGetTellsA404FromOtherFailuresWithoutTheToken() throws Exception {
+        // What Get Track answers for a song missing from the catalog of the token's market.
+        IOException notFound = thrownBy("HTTP/1.1 404 Not Found", "",
+                "{\"error\":{\"status\":404,\"message\":\"Non existing id\"}}");
+        assertTrue(notFound.toString(), notFound instanceof WebApi.NotFound);
+        assertEquals("the Web API answered HTTP 404", notFound.getMessage());
+
+        IOException failed = thrownBy("HTTP/1.1 500 Internal Server Error", "", "");
+        assertFalse(failed.toString(), failed instanceof WebApi.NotFound);
+        assertFalse(failed instanceof WebApi.RateLimited);
+        assertEquals("the Web API answered HTTP 500", failed.getMessage());
+    }
+
+    @Test
     public void theRealGetGoesThroughThePace() {
         assertTrue(WebApi.HTTP instanceof WebApi.Paced);
     }
@@ -244,6 +258,16 @@ public class WebApiTest {
 
     /** Serves one 429 with {@code headers} and {@code body} to the real GET, and returns what it threw. */
     private static WebApi.RateLimited rateLimitedBy(String headers, String body) throws Exception {
+        IOException thrown = thrownBy("HTTP/1.1 429 Too Many Requests", headers, body);
+        assertTrue("expected a RateLimited: " + thrown, thrown instanceof WebApi.RateLimited);
+        return (WebApi.RateLimited) thrown;
+    }
+
+    /**
+     * Serves one answer with {@code statusLine}, {@code headers} and {@code body} to the real GET, and
+     * returns what it threw, which never holds the token.
+     */
+    private static IOException thrownBy(String statusLine, String headers, String body) throws Exception {
         try (ServerSocket server = new ServerSocket(0, 1, InetAddress.getByName("127.0.0.1"))) {
             FutureTask<Void> serving = new FutureTask<>(() -> {
                 try (Socket client = server.accept()) {
@@ -252,7 +276,7 @@ public class WebApiTest {
                         // read the request's headers
                     }
                     byte[] content = body.getBytes(UTF_8);
-                    client.getOutputStream().write(("HTTP/1.1 429 Too Many Requests\r\n" + headers
+                    client.getOutputStream().write((statusLine + "\r\n" + headers
                             + "Content-Type: application/json\r\nContent-Length: " + content.length
                             + "\r\nConnection: close\r\n\r\n").getBytes(UTF_8));
                     client.getOutputStream().write(content);
@@ -263,10 +287,10 @@ public class WebApiTest {
             new Thread(serving, "Web API test server").start();
             try {
                 WebApi.blockingGet("http://127.0.0.1:" + server.getLocalPort() + "/v1/tracks/a", "SECRET-TOKEN");
-                throw new AssertionError("expected a RateLimited");
-            } catch (WebApi.RateLimited expected) {
+                throw new AssertionError("expected an IOException");
+            } catch (IOException expected) {
                 assertFalse(expected.getMessage().contains("SECRET-TOKEN"));
-                serving.get(5, TimeUnit.SECONDS);
+                serving.get(60, TimeUnit.SECONDS);
                 return expected;
             }
         }
