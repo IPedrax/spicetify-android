@@ -8,6 +8,7 @@ import android.content.res.ColorStateList;
 import android.graphics.BitmapFactory;
 import android.graphics.Color;
 import android.graphics.Typeface;
+import android.graphics.drawable.GradientDrawable;
 import android.net.Uri;
 import android.text.Editable;
 import android.text.TextUtils;
@@ -48,15 +49,18 @@ import java.util.concurrent.ThreadPoolExecutor;
 import java.util.concurrent.TimeUnit;
 
 /**
- * The Spicetify Marketplace: a full-screen browser of themes and extensions reached from the Theme
- * section. The Theme section's presets, Galaxy V2 and Play a random song are pinned above the
- * community items. A tapped preset applies. A tapped theme's color scheme and any background image
+ * The Spicetify Marketplace: a full-screen browser reached from the Theme section, with a Themes tab
+ * and an Extensions tab. The Theme section's presets and Galaxy V2 are pinned above the community
+ * themes, and Play a random song above the community extensions, where those with an Android version
+ * come first. A tapped preset applies. A tapped theme's color scheme and any background image
  * download and go to {@link ThemeSection#chooseScheme}. An extension with an Android version has a
  * switch and a dialog, and any other extension links to its GitHub page.
  */
 final class MarketplaceScreen {
     private static final String BACKGROUND_COLOR = "#121212";
     private static final String PLACEHOLDER_COLOR = "#282828";
+    /** Spotify's green, on its buttons and its selected filter chips. */
+    private static final int GREEN = 0xFF1ED760;
     /** The Theme section's presets, pinned first as cards: kind, label, and what it looks like. */
     private static final String[][] PRESETS = {
             {ThemePresets.STOCK, "Spotify default", "Spotify's own colors."},
@@ -70,7 +74,7 @@ final class MarketplaceScreen {
     private static final String BUILT_IN_AUTHOR = "Spicetify for Android";
     /** The roles a preset card's strip shows, and Spotify's own colors for them. */
     private static final String[] STRIP_ROLES = {"main", "card", "button", "text"};
-    private static final int[] STOCK_STRIP = {0xFF121212, 0xFF282828, 0xFF1ED760, 0xFFFFFFFF};
+    private static final int[] STOCK_STRIP = {0xFF121212, 0xFF282828, GREEN, 0xFFFFFFFF};
     /**
      * A theme's own image smaller than this on either side is a texture tile, like Spotify Dark's
      * 70x70 ones, not a background; the real ones start at Galaxy's 1200x675.
@@ -93,7 +97,7 @@ final class MarketplaceScreen {
     private final Runnable onApplied;
     private final int rowWidthPx;
     private final Adapter adapter = new Adapter();
-    /** Above the GitHub results, in order: the preset cards, Galaxy V2 and Play a random song. */
+    /** Above the GitHub results of their tab, in order: the preset cards, Galaxy V2 and Play a random song. */
     private final List<Marketplace.Theme> pinned = new ArrayList<>();
     /** Each preset card's {@link ThemePresets} kind. */
     private final Map<Marketplace.Theme, String> presets = new HashMap<>();
@@ -127,13 +131,21 @@ final class MarketplaceScreen {
     };
 
     private Dialog dialog;
+    /** The Themes and Extensions pills. */
+    private LinearLayout tabs;
     private EditText search;
     private ProgressBar progress;
     private TextView status;
     private Button retry;
+    private ListView list;
+    /** The tab on screen: the kind of item it lists. */
+    private Marketplace.Kind tab;
     private List<Marketplace.Theme> allThemes = Collections.emptyList();
     private String errorMessage;
-    /** Why part of the list, such as the extensions, couldn't load; shown when the status has nothing else to say. */
+    /**
+     * Why part of the list, such as the extensions, couldn't load; shown when the status has nothing
+     * else to say, and on a tab with nothing found, where it may say why.
+     */
     private String notice;
     /** From the start of a load until its last call. */
     private boolean loading;
@@ -205,10 +217,12 @@ final class MarketplaceScreen {
         root.setBackgroundColor(Color.parseColor(BACKGROUND_COLOR));
         root.setFitsSystemWindows(true);
         root.addView(header());
+        root.addView(tabRow());
         root.addView(searchField());
         root.addView(statusRow());
+        showTab(Marketplace.Kind.THEME);
 
-        ListView list = new ListView(context);
+        list = new ListView(context);
         list.setDivider(null);
         list.setDividerHeight(0);
         list.setAdapter(adapter);
@@ -252,9 +266,58 @@ final class MarketplaceScreen {
         return header;
     }
 
+    /** A pill for each tab, in the style of Spotify's filter chips. */
+    private LinearLayout tabRow() {
+        tabs = new LinearLayout(context);
+        tabs.setPadding(dp(16), dp(8), dp(16), dp(8));
+        LinearLayout.LayoutParams gap = new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+        gap.setMarginEnd(dp(8));
+        tabs.addView(pill("Themes", Marketplace.Kind.THEME), gap);
+        tabs.addView(pill("Extensions", Marketplace.Kind.EXTENSION));
+        return tabs;
+    }
+
+    private TextView pill(String label, Marketplace.Kind kind) {
+        TextView pill = new TextView(context);
+        pill.setText(label);
+        pill.setTag(kind);
+        pill.setTextSize(14);
+        pill.setPadding(dp(16), dp(6), dp(16), dp(6));
+        pill.setOnClickListener(view -> guarded(() -> {
+            showTab(kind);
+            applyFilter();
+            // A tab starts at its top. After the new items, or the list would keep its old position.
+            list.setSelection(0);
+        }));
+        return pill;
+    }
+
+    /**
+     * Makes {@code kind}'s tab the one on screen: its pill filled, the other outlined, and the search
+     * hint to match. The search text stays.
+     */
+    private void showTab(Marketplace.Kind kind) {
+        tab = kind;
+        for (int i = 0; i < tabs.getChildCount(); i++) {
+            TextView pill = (TextView) tabs.getChildAt(i);
+            boolean selected = pill.getTag() == kind;
+            GradientDrawable shape = new GradientDrawable();
+            shape.setCornerRadius(dp(100)); // cut to half the height when drawn, which rounds the ends
+            if (selected) {
+                shape.setColor(GREEN);
+            } else {
+                shape.setStroke(dp(1), Color.rgb(179, 179, 179));
+            }
+            pill.setBackground(shape);
+            pill.setTextColor(selected ? Color.parseColor(BACKGROUND_COLOR) : Color.WHITE);
+            pill.setSelected(selected);
+        }
+        search.setHint(kind == Marketplace.Kind.THEME ? "Search themes" : "Search extensions");
+    }
+
     private EditText searchField() {
         search = new EditText(context);
-        search.setHint("Search themes");
         search.setSingleLine(true);
         search.addTextChangedListener(new TextWatcher() {
             @Override
@@ -309,26 +372,40 @@ final class MarketplaceScreen {
         });
     }
 
-    /** Re-derives the filtered list from the current search text and updates the status row. */
+    /**
+     * Re-derives the list from the tab and the search text, and updates the status row. Each tab is
+     * loading until the loader's last call: the extensions come after the themes, and a theme can
+     * still come with them.
+     */
     private void applyFilter() {
-        List<Marketplace.Theme> themes = new ArrayList<>(pinned);
-        themes.addAll(allThemes);
-        List<Marketplace.Theme> filtered = Marketplace.filter(themes, search.getText().toString());
+        List<Marketplace.Theme> found = new ArrayList<>();
+        for (Marketplace.Theme item : allThemes) {
+            if (item.kind == tab) found.add(item);
+        }
+        // Extensions with an Android version first. The sort is stable, so the star order holds within each group.
+        Collections.sort(found, (a, b) -> Boolean.compare(a.androidId == null, b.androidId == null));
+        List<Marketplace.Theme> items = new ArrayList<>();
+        for (Marketplace.Theme item : pinned) {
+            if (item.kind == tab) items.add(item);
+        }
+        items.addAll(found);
+        List<Marketplace.Theme> filtered = Marketplace.filter(items, search.getText().toString());
         adapter.setThemes(filtered);
+        String kinds = tab == Marketplace.Kind.THEME ? "themes" : "extensions";
         String message = notice;
         if (loading) {
-            message = "Loading themes";
+            message = "Loading " + kinds;
         } else if (errorMessage != null) {
             message = errorMessage;
-        } else if (allThemes.isEmpty()) {
-            message = "No themes found";
+        } else if (found.isEmpty()) {
+            message = notice != null ? notice : "No " + kinds + " found";
         } else if (filtered.isEmpty()) {
-            message = "No themes match";
+            message = "No " + kinds + " match";
         }
         status.setText(message);
         status.setVisibility(message == null ? View.GONE : View.VISIBLE);
         progress.setVisibility(loading ? View.VISIBLE : View.GONE);
-        retry.setVisibility(!loading && (errorMessage != null || allThemes.isEmpty()) ? View.VISIBLE : View.GONE);
+        retry.setVisibility(!loading && (errorMessage != null || found.isEmpty()) ? View.VISIBLE : View.GONE);
     }
 
     /**
@@ -523,10 +600,9 @@ final class MarketplaceScreen {
         public View getView(int position, View convertView, ViewGroup parent) {
             Row row = convertView != null ? (Row) convertView.getTag() : new Row(context);
             Marketplace.Theme theme = themes.get(position);
-            boolean extension = theme.kind == Marketplace.Kind.EXTENSION;
-            String subtitle = (extension ? "Extension · " : "Theme · ") + theme.author
+            String subtitle = theme.author
                     + (theme.stars < 0 ? "" : ", " + theme.stars + (theme.stars == 1 ? " star" : " stars"))
-                    + (extension && theme.androidId == null ? " · Desktop only" : "");
+                    + (theme.kind == Marketplace.Kind.EXTENSION && theme.androidId == null ? " · Desktop only" : "");
             row.title.setText(theme.title);
             row.subtitle.setText(subtitle);
             row.description.setText(theme.description);

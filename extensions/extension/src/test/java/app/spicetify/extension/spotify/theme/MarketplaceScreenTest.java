@@ -28,6 +28,7 @@ import android.widget.ListView;
 import android.widget.ProgressBar;
 import android.widget.Switch;
 import android.widget.TextView;
+import androidx.test.platform.app.InstrumentationRegistry;
 import app.spicetify.extension.spotify.extensions.Extensions;
 import app.spicetify.extension.spotify.settings.InstalledPatches;
 import app.spicetify.extension.spotify.settings.SpicetifySettingsScreen;
@@ -43,6 +44,7 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.Executor;
+import org.junit.Before;
 import org.junit.Rule;
 import org.junit.Test;
 import org.junit.rules.TemporaryFolder;
@@ -70,9 +72,9 @@ public class MarketplaceScreenTest {
             new Marketplace.Repo("spicetify", "cli", "main", "https://github.com/spicetify/cli", 1);
     private static final Marketplace.Repo DUSK =
             new Marketplace.Repo("a", "dusk", "main", "https://github.com/a/dusk", 3);
-    /** The cards pinned above the GitHub results, in order. */
+    /** The cards pinned above the GitHub results on the Themes tab, in order. */
     private static final List<String> PINNED_TITLES = Arrays.asList("Spotify default", "AMOLED black",
-            "Material You", "Material You, black background", "Galaxy V2", "Play a random song");
+            "Material You", "Material You, black background", "Galaxy V2");
     private static final int PINNED = PINNED_TITLES.size();
     private static final int GALAXY = PINNED_TITLES.indexOf("Galaxy V2");
     /** Galaxy's own color.ini, in short: one scheme. */
@@ -96,10 +98,20 @@ public class MarketplaceScreenTest {
     };
     /** Every URL the fetcher was asked for, in order; a test's image fetcher can add its own. */
     private final List<String> requested = new ArrayList<>();
+    /** Work the fetcher does when it's asked for a URL, before it answers; each runs once. */
+    private final Map<String, Runnable> onRequest = new HashMap<>();
+
+    @Before
+    public void setUp() {
+        // Touch mode is the window manager's, so it would outlive the test that turns it on.
+        InstrumentationRegistry.getInstrumentation().setInTouchMode(false);
+    }
 
     private Marketplace.Fetcher fetcher() {
         return url -> {
             requested.add(url);
+            Runnable work = onRequest.remove(url);
+            if (work != null) work.run();
             String value = responses.get(url);
             if (value == null) throw new FileNotFoundException(url);
             return value;
@@ -160,7 +172,7 @@ public class MarketplaceScreenTest {
         return titles;
     }
 
-    /** The pinned titles, then {@code titles}. */
+    /** The Themes tab's pinned titles, then {@code titles}. */
     private static List<String> listed(String... titles) {
         List<String> all = new ArrayList<>(PINNED_TITLES);
         all.addAll(Arrays.asList(titles));
@@ -200,6 +212,25 @@ public class MarketplaceScreenTest {
             }
         }
         return null;
+    }
+
+    private static TextView labeled(View view, String label) {
+        if (view instanceof TextView && ((TextView) view).getText().toString().equals(label)) return (TextView) view;
+        if (view instanceof ViewGroup) {
+            ViewGroup group = (ViewGroup) view;
+            for (int i = 0; i < group.getChildCount(); i++) {
+                TextView found = labeled(group.getChildAt(i), label);
+                if (found != null) return found;
+            }
+        }
+        return null;
+    }
+
+    /** The tab labeled {@code label}, Themes or Extensions. */
+    private static TextView tab(View screen, String label) {
+        TextView tab = labeled(screen, label);
+        assertNotNull("a tab labeled " + label, tab);
+        return tab;
     }
 
     /** The texts of the visible text views and buttons under {@code view}. */
@@ -242,8 +273,8 @@ public class MarketplaceScreenTest {
         assertNotNull(list);
         ListAdapter adapter = list.getAdapter();
         assertEquals(listed("Aurora", "Borealis"), titles(adapter));
-        assertTrue(visibleTexts(adapter.getView(PINNED, null, list)).contains("Theme · ownerA, 100 stars"));
-        assertTrue(visibleTexts(adapter.getView(PINNED + 1, null, list)).contains("Theme · ownerB, 1 star"));
+        assertTrue(visibleTexts(adapter.getView(PINNED, null, list)).contains("ownerA, 100 stars"));
+        assertTrue(visibleTexts(adapter.getView(PINNED + 1, null, list)).contains("ownerB, 1 star"));
 
         EditText search = find(dialog.getWindow().getDecorView(), EditText.class);
         assertNotNull(search);
@@ -267,6 +298,8 @@ public class MarketplaceScreenTest {
     @Test
     public void aLoadWithNoThemesSaysSoAndOffersRetry() {
         responses.put(Marketplace.SEARCH_URL + "1", "{\"total_count\":0,\"items\":[]}");
+        // No extensions either, but no failure: a notice would take the place of "No themes found".
+        responses.put(Marketplace.searchUrl(Marketplace.EXTENSIONS_TOPIC) + "1", "{\"total_count\":0,\"items\":[]}");
         View screen = showScreen().getWindow().getDecorView();
 
         List<String> texts = visibleTexts(screen);
@@ -290,6 +323,11 @@ public class MarketplaceScreenTest {
         assertTrue(texts.contains("Couldn't load the Marketplace: " + Marketplace.SEARCH_URL + "1"));
         assertTrue(texts.contains("Retry"));
         assertEquals(View.GONE, spinner.getVisibility());
+        tab(screen, "Extensions").performClick(); // the error shows on both tabs
+        texts = visibleTexts(screen);
+        assertTrue(texts.contains("Couldn't load the Marketplace: " + Marketplace.SEARCH_URL + "1"));
+        assertTrue(texts.contains("Retry"));
+        tab(screen, "Themes").performClick();
 
         putTwoThemes();
         button(screen, "Retry").performClick();
@@ -445,7 +483,7 @@ public class MarketplaceScreenTest {
         Marketplace.Theme galaxy = (Marketplace.Theme) list.getAdapter().getItem(GALAXY);
         assertEquals("Galaxy V2", galaxy.title);
         // Its stars aren't known, so its row names the author alone.
-        assertTrue(visibleTexts(list.getAdapter().getView(GALAXY, null, list)).contains("Theme · harbassan"));
+        assertTrue(visibleTexts(list.getAdapter().getView(GALAXY, null, list)).contains("harbassan"));
 
         find(screen, EditText.class).setText("galaxy");
         assertEquals(1, list.getAdapter().getCount());
@@ -606,22 +644,175 @@ public class MarketplaceScreenTest {
     }
 
     @Test
-    public void pinsThePresetsGalaxyV2AndPlayARandomSongFirst() {
+    public void theThemesTabOpensFirstWithOnlyThemesAndThePresetsFirst() {
         putTwoThemes();
+        putExtensions();
         View screen = showScreen().getWindow().getDecorView();
         ListView list = find(screen, ListView.class);
 
-        assertEquals(listed("Aurora", "Borealis"), titles(list.getAdapter()));
-        Marketplace.Theme random = (Marketplace.Theme) list.getAdapter().getItem(PINNED - 1);
+        assertTrue(tab(screen, "Themes").isSelected());
+        assertFalse(tab(screen, "Extensions").isSelected());
+        assertEquals("Search themes", find(screen, EditText.class).getHint().toString());
+        // The presets and Galaxy V2, then the themes by stars, Dusk from the extensions search among them.
+        assertEquals(listed("Aurora", "Dusk", "Borealis"), titles(list.getAdapter()));
+
+        // Search filters the pinned cards like the rest.
+        find(screen, EditText.class).setText("black");
+        assertEquals(Arrays.asList("AMOLED black", "Material You, black background"), titles(list.getAdapter()));
+    }
+
+    @Test
+    public void theExtensionsTabListsPlayARandomSongThenAndroidExtensionsThenDesktopOnlyOnes() {
+        putTwoThemes();
+        putExtensions();
+        // Two more: a desktop-only extension in a theme's repository, with the most stars, and Hide
+        // podcasts, whose repository has more stars than Trash Bin's.
+        responses.put(Marketplace.manifestUrl(REPO_A), "[" + themeJson("Aurora", "A vivid theme")
+                + ",{\"name\":\"Visualizer\",\"description\":\"Bars that move\",\"main\":\"v.js\"}]");
+        Marketplace.Repo podcasts = new Marketplace.Repo("theRealPadster", "spicetify-hide-podcasts", "main",
+                "https://github.com/theRealPadster/spicetify-hide-podcasts", 2);
+        responses.put(Marketplace.searchUrl(Marketplace.EXTENSIONS_TOPIC) + "1", "{\"total_count\":3,\"items\":["
+                + "{\"full_name\":\"a/dusk\",\"default_branch\":\"main\","
+                + "\"html_url\":\"https://github.com/a/dusk\",\"stargazers_count\":3},"
+                + "{\"full_name\":\"theRealPadster/spicetify-hide-podcasts\",\"default_branch\":\"main\","
+                + "\"html_url\":\"" + podcasts.url + "\",\"stargazers_count\":2},"
+                + "{\"full_name\":\"spicetify/cli\",\"default_branch\":\"main\","
+                + "\"html_url\":\"https://github.com/spicetify/cli\",\"stargazers_count\":1}]}");
+        responses.put(Marketplace.manifestUrl(podcasts),
+                "{\"name\":\"Hide Podcasts\",\"description\":\"No podcasts\",\"main\":\"hidePodcasts.js\"}");
+        View screen = showScreen().getWindow().getDecorView();
+        ListView list = find(screen, ListView.class);
+
+        tab(screen, "Extensions").performClick();
+
+        assertTrue(tab(screen, "Extensions").isSelected());
+        assertFalse(tab(screen, "Themes").isSelected());
+        assertEquals("Search extensions", find(screen, EditText.class).getHint().toString());
+        // Each group by stars: Hide podcasts, then Trash Bin; then Visualizer, then Lyrics.
+        assertEquals(Arrays.asList("Play a random song", "Hide Podcasts", "Trash Bin", "Visualizer", "Lyrics"),
+                titles(list.getAdapter()));
+        Marketplace.Theme random = (Marketplace.Theme) list.getAdapter().getItem(0);
         assertEquals(Marketplace.Kind.EXTENSION, random.kind);
         assertEquals(Extensions.RANDOM_SONG, random.androidId);
         assertEquals("Spicetify for Android", random.author);
         assertEquals(-1, random.stars);
         assertNull(random.previewUrl);
+    }
 
-        // Search filters the pinned cards like the rest.
-        find(screen, EditText.class).setText("black");
-        assertEquals(Arrays.asList("AMOLED black", "Material You, black background"), titles(list.getAdapter()));
+    @Test
+    public void searchStaysWithinTheTab() {
+        putTwoThemes();
+        putExtensions();
+        View screen = showScreen().getWindow().getDecorView();
+        ListView list = find(screen, ListView.class);
+        EditText search = find(screen, EditText.class);
+
+        search.setText("spotify"); // two presets and Play a random song say it
+        assertEquals(Arrays.asList("Spotify default", "Material You"), titles(list.getAdapter()));
+        tab(screen, "Extensions").performClick();
+        assertEquals(Collections.singletonList("Play a random song"), titles(list.getAdapter()));
+
+        search.setText("dim"); // only Dusk, a theme, says it
+        assertEquals(Collections.emptyList(), titles(list.getAdapter()));
+        assertTrue(visibleTexts(screen).contains("No extensions match"));
+        tab(screen, "Themes").performClick();
+        assertEquals(Collections.singletonList("Dusk"), titles(list.getAdapter()));
+    }
+
+    @Test
+    public void switchingTabsKeepsTheSearchText() {
+        putTwoThemes();
+        putExtensions();
+        View screen = showScreen().getWindow().getDecorView();
+        ListView list = find(screen, ListView.class);
+        EditText search = find(screen, EditText.class);
+        search.setText("song");
+        assertTrue(visibleTexts(screen).contains("No themes match"));
+
+        tab(screen, "Extensions").performClick();
+        assertEquals("song", search.getText().toString());
+        assertEquals(Arrays.asList("Play a random song", "Trash Bin"), titles(list.getAdapter()));
+
+        tab(screen, "Themes").performClick();
+        assertEquals("song", search.getText().toString());
+        assertEquals(Collections.emptyList(), titles(list.getAdapter()));
+        assertTrue(visibleTexts(screen).contains("No themes match"));
+    }
+
+    @Test
+    public void aTabStartsAtItsTop() {
+        putTwoThemes();
+        putExtensions();
+        // As on a phone: in touch mode, a list keeps its position when its items change.
+        InstrumentationRegistry.getInstrumentation().setInTouchMode(true);
+        View screen = showScreen().getWindow().getDecorView();
+        ListView list = find(screen, ListView.class);
+        list.setSelection(PINNED); // down to the GitHub themes
+        idle();
+        assertEquals(PINNED, list.getFirstVisiblePosition());
+
+        tab(screen, "Extensions").performClick();
+        idle();
+
+        assertEquals(0, list.getFirstVisiblePosition());
+    }
+
+    @Test
+    public void theHintAndTheStatusFollowTheTab() {
+        putTwoThemes();
+        responses.put(Marketplace.searchUrl(Marketplace.EXTENSIONS_TOPIC) + "1", "{\"total_count\":0,\"items\":[]}");
+        View screen = showScreen().getWindow().getDecorView();
+        EditText search = find(screen, EditText.class);
+        assertFalse(visibleTexts(screen).contains("Retry"));
+
+        tab(screen, "Extensions").performClick();
+        assertEquals("Search extensions", search.getHint().toString());
+        List<String> texts = visibleTexts(screen);
+        assertTrue(texts.contains("No extensions found"));
+        assertTrue(texts.contains("Retry"));
+
+        tab(screen, "Themes").performClick();
+        assertEquals("Search themes", search.getHint().toString());
+        texts = visibleTexts(screen);
+        assertFalse(texts.contains("No extensions found"));
+        assertFalse(texts.contains("Retry"));
+    }
+
+    @Test
+    public void theExtensionsTabSaysLoadingExtensionsWhileOnlyThemesHaveArrived() {
+        putTwoThemes();
+        putExtensions();
+        List<Runnable> loads = new ArrayList<>();
+        background = loads::add;
+        View screen = showScreen().getWindow().getDecorView();
+        ListView list = find(screen, ListView.class);
+        List<String> themes = new ArrayList<>();
+        List<String> themesTexts = new ArrayList<>();
+        List<String> extensions = new ArrayList<>();
+        List<String> extensionsTexts = new ArrayList<>();
+        // The extensions search starts once the theme repositories' manifests are all in.
+        onRequest.put(Marketplace.searchUrl(Marketplace.EXTENSIONS_TOPIC) + "1", () -> {
+            idle(); // their updates reach the screen
+            themes.addAll(titles(list.getAdapter()));
+            themesTexts.addAll(visibleTexts(screen));
+            tab(screen, "Extensions").performClick();
+            extensions.addAll(titles(list.getAdapter()));
+            extensionsTexts.addAll(visibleTexts(screen));
+        });
+
+        loads.remove(0).run();
+
+        assertEquals(listed("Aurora", "Borealis"), themes);
+        // Dusk, a theme, comes with the extensions, so the Themes tab is still loading too.
+        assertTrue(themesTexts.contains("Loading themes"));
+        assertEquals(Collections.singletonList("Play a random song"), extensions);
+        assertTrue(extensionsTexts.contains("Loading extensions"));
+        assertFalse(extensionsTexts.contains("No extensions found"));
+        idle();
+        assertEquals(Arrays.asList("Play a random song", "Trash Bin", "Lyrics"), titles(list.getAdapter()));
+        assertFalse(visibleTexts(screen).contains("Loading extensions"));
+        tab(screen, "Themes").performClick();
+        assertEquals(listed("Aurora", "Dusk", "Borealis"), titles(list.getAdapter()));
     }
 
     @Test
@@ -659,17 +850,19 @@ public class MarketplaceScreenTest {
     }
 
     @Test
-    public void everyRowNamesItsKind() {
+    public void aRowLeavesItsKindToTheTab() {
         putTwoThemes();
         putExtensions();
-        ListView list = find(showScreen().getWindow().getDecorView(), ListView.class);
+        View screen = showScreen().getWindow().getDecorView();
+        ListView list = find(screen, ListView.class);
 
-        assertTrue(visibleTexts(row(list, "Dusk")).contains("Theme · a, 3 stars"));
-        assertTrue(visibleTexts(row(list, "Trash Bin")).contains("Extension · a, 1 star"));
-        assertTrue(visibleTexts(row(list, "Lyrics")).contains("Extension · a, 3 stars · Desktop only"));
+        assertTrue(visibleTexts(row(list, "Dusk")).contains("a, 3 stars"));
         // Built-in cards have no stars, so they name the author alone.
-        assertTrue(visibleTexts(row(list, "AMOLED black")).contains("Theme · Spicetify for Android"));
-        assertTrue(visibleTexts(row(list, "Play a random song")).contains("Extension · Spicetify for Android"));
+        assertTrue(visibleTexts(row(list, "AMOLED black")).contains("Spicetify for Android"));
+        tab(screen, "Extensions").performClick();
+        assertTrue(visibleTexts(row(list, "Trash Bin")).contains("a, 1 star"));
+        assertTrue(visibleTexts(row(list, "Lyrics")).contains("a, 3 stars · Desktop only"));
+        assertTrue(visibleTexts(row(list, "Play a random song")).contains("Spicetify for Android"));
     }
 
     @Test
@@ -678,6 +871,7 @@ public class MarketplaceScreenTest {
         putExtensions();
         Dialog marketplace = showScreen();
         ListView list = find(marketplace.getWindow().getDecorView(), ListView.class);
+        tab(marketplace.getWindow().getDecorView(), "Extensions").performClick();
         View row = row(list, "Trash Bin");
         Switch toggle = find(row, Switch.class);
         assertEquals(View.VISIBLE, toggle.getVisibility());
@@ -695,7 +889,9 @@ public class MarketplaceScreenTest {
     public void withoutTheExtensionsPatchTheSwitchIsDisabledAndTheDialogSaysWhy() {
         putTwoThemes();
         putExtensions();
-        ListView list = find(showScreen().getWindow().getDecorView(), ListView.class);
+        View screen = showScreen().getWindow().getDecorView();
+        ListView list = find(screen, ListView.class);
+        tab(screen, "Extensions").performClick();
         assertFalse(InstalledPatches.extensions()); // unpatched, as in every test
         assertFalse(find(row(list, "Trash Bin"), Switch.class).isEnabled());
 
@@ -719,6 +915,7 @@ public class MarketplaceScreenTest {
         try {
             Dialog marketplace = showScreen();
             ListView list = find(marketplace.getWindow().getDecorView(), ListView.class);
+            tab(marketplace.getWindow().getDecorView(), "Extensions").performClick();
 
             tap(list, position(list, "Play a random song"));
 
@@ -739,7 +936,9 @@ public class MarketplaceScreenTest {
         // Spotify's settings screen wraps its activity, which can start another app's activity.
         screenContext = new ContextThemeWrapper(Robolectric.buildActivity(Activity.class).setup().get(),
                 android.R.style.Theme_Material);
-        ListView list = find(showScreen().getWindow().getDecorView(), ListView.class);
+        View screen = showScreen().getWindow().getDecorView();
+        ListView list = find(screen, ListView.class);
+        tab(screen, "Extensions").performClick();
         assertEquals(View.GONE, find(row(list, "Lyrics"), Switch.class).getVisibility());
 
         tap(list, position(list, "Lyrics"));
@@ -751,7 +950,7 @@ public class MarketplaceScreenTest {
     }
 
     @Test
-    public void aNoticeShowsAboveTheListWhileTheThemesStayListed() {
+    public void aNoticeShowsOnBothTabsWhileTheThemesStayListed() {
         putTwoThemes(); // and no answer for the extensions search
         View screen = showScreen().getWindow().getDecorView();
         ListView list = find(screen, ListView.class);
@@ -759,12 +958,21 @@ public class MarketplaceScreenTest {
         String notice = "Extensions couldn't load: " + Marketplace.searchUrl(Marketplace.EXTENSIONS_TOPIC) + "1";
         assertTrue(visibleTexts(screen).contains(notice));
         assertEquals(listed("Aurora", "Borealis"), titles(list.getAdapter()));
+        // With no extensions to list, the notice says why, in place of "No extensions found".
+        tab(screen, "Extensions").performClick();
+        List<String> texts = visibleTexts(screen);
+        assertTrue(texts.contains(notice));
+        assertFalse(texts.contains("No extensions found"));
+        assertTrue(texts.contains("Retry"));
 
         putExtensions();
         button(screen, "Refresh").performClick();
         idle();
         assertFalse(visibleTexts(screen).contains(notice));
-        assertEquals(PINNED + 5, list.getAdapter().getCount());
+        assertEquals(Arrays.asList("Play a random song", "Trash Bin", "Lyrics"), titles(list.getAdapter()));
+        tab(screen, "Themes").performClick();
+        assertFalse(visibleTexts(screen).contains(notice));
+        assertEquals(listed("Aurora", "Dusk", "Borealis"), titles(list.getAdapter()));
     }
 
     private static String dataUri(byte[] png) {
