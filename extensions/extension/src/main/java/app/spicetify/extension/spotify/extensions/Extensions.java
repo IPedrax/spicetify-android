@@ -155,7 +155,8 @@ public final class Extensions {
         switch (id) {
             case TRASH_BIN: return "Throw songs and artists in the trash from their menus, and Spotify skips them.";
             case RANDOM_SONG: return "Play a random song from all of Spotify, or from your library.";
-            case SHUFFLE_PLUS: return "Shuffle what's playing in a truly random order.";
+            case SHUFFLE_PLUS: return "Shuffle a playlist, album or Liked Songs in a truly random order. Long-press the"
+                    + " shuffle button in Now Playing, or open a playlist's menu and choose Shuffle+ this playlist.";
             case HIDE_PODCASTS: return "Remove podcasts and episodes from Home, Search and your Library's filters.";
             default: return null;
         }

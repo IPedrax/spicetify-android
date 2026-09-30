@@ -11,13 +11,13 @@ import java.util.Random;
 
 /**
  * Shuffle+ (desktop {@code shuffle+.js}, spec section 3): lists every song of the playlist, album or
- * Liked Songs that's playing, shuffles them with Fisher-Yates, and plays that exact order with
- * Spotify's own shuffle off.
+ * Liked Songs that's playing, or of the playlist its menu asks for, shuffles them with Fisher-Yates,
+ * and plays that exact order with Spotify's own shuffle off.
  * <p>
- * Threading: a run starts on the main thread, from the track menu or the card's button, and returns
- * at once: it only posts its first step to the bridge thread. Each later step runs there too, in the
- * last one's callback, and none of them waits: a retry for a list still loading is put off with
- * postDelayed. Toasts are posted back to the main thread.
+ * Threading: a run starts on the main thread, from Now Playing's shuffle button, a playlist's menu or
+ * the card's button, and returns at once: it only posts its first step to the bridge thread. Each
+ * later step runs there too, in the last one's callback, and none of them waits: a retry for a list
+ * still loading is put off with postDelayed. Toasts are posted back to the main thread.
  */
 final class ShufflePlus {
     /** A playlist or Liked Songs is listed this many songs at a time. */
@@ -44,8 +44,6 @@ final class ShufflePlus {
     static void register() {
         Extensions.register(Extensions.SHUFFLE_PLUS, context ->
                 RandomSong.button(context, "Shuffle+ what's playing", ShufflePlus::shuffleWhatsPlaying));
-        // The track menu's item runs the action with this id (ExtensionMenus).
-        Extensions.registerAction(Extensions.SHUFFLE_PLUS, ShufflePlus::shuffleWhatsPlaying);
         Extensions.onSwitch(Extensions.SHUFFLE_PLUS, ShufflePlus::onSwitch);
     }
 
@@ -72,23 +70,36 @@ final class ShufflePlus {
         Collections.shuffle(list, random);
     }
 
-    /** The {@code shuffle_plus} action and the card's button. On the main thread, it only posts the run. */
+    /** Now Playing's long-press and the card's button. On the main thread, it only posts the run. */
     static void shuffleWhatsPlaying(Context context) {
         shuffleWhatsPlaying(context, RandomSong.LOADING_RETRY_MILLIS, RANDOM);
     }
 
     static void shuffleWhatsPlaying(Context context, long loadingRetryMillis, Random random) {
+        shuffle(context, null, loadingRetryMillis, random);
+    }
+
+    /**
+     * A playlist's menu: shuffles and plays the list {@code contextUri}, whatever is playing, even
+     * nothing. On the main thread, it only posts the run.
+     */
+    static void shuffle(Context context, String contextUri) {
+        shuffle(context, contextUri, RandomSong.LOADING_RETRY_MILLIS, RANDOM);
+    }
+
+    /** Shuffles {@code contextUri}, or what's playing when it's null. */
+    static void shuffle(Context context, String contextUri, long loadingRetryMillis, Random random) {
         try {
-            PlayerBridge.post(new Run(context.getApplicationContext(), loadingRetryMillis, random)::start);
+            PlayerBridge.post(new Run(context.getApplicationContext(), contextUri, loadingRetryMillis, random)::start);
         } catch (Throwable e) {
             Log.w("Spicetify", "Couldn't start Shuffle+", e);
         }
     }
 
     /**
-     * One shuffle of what's playing. Its steps run one at a time on the bridge thread: the first is
-     * posted there, a retry is posted there after its delay, and every other step runs in the last
-     * one's bridge callback. So the fields need no lock.
+     * One shuffle of a list. Its steps run one at a time on the bridge thread: the first is posted
+     * there, a retry is posted there after its delay, and every other step runs in the last one's
+     * bridge callback. So the fields need no lock.
      */
     private static final class Run {
         private final Context context;
@@ -99,31 +110,36 @@ final class ShufflePlus {
         private long queueRevision;
         private int retries;
 
-        Run(Context context, long loadingRetryMillis, Random random) {
+        /** A run of the list {@code contextUri}, or of what's playing when it's null. */
+        Run(Context context, String contextUri, long loadingRetryMillis, Random random) {
             this.context = context;
+            this.contextUri = contextUri;
             this.loadingRetryMillis = loadingRetryMillis;
             this.random = random;
         }
 
-        /** Lists a playlist, Liked Songs or an album from the player state; anything else is only told. */
+        /** Lists the playlist, Liked Songs or album asked for, or else the one playing; anything else is only told. */
         void start() {
-            Esperanto.PlayerState state = PlayerBridge.lastState();
-            if (state == null) {
-                // ponytail: no stream is opened for one run. It's open while Shuffle+ or Trash Bin is on,
-                // and the bridge opens again one that ended.
-                if (Extensions.isOn(context, Extensions.SHUFFLE_PLUS)) {
-                    fail("Spotify hasn't said what's playing yet; try again in a moment", null);
-                } else {
-                    // Only a Toast: a status would keep saying so after the user turns Shuffle+ on.
-                    RandomSong.toast(context, Extensions.SHUFFLE_PLUS, "Turn Shuffle+ on first");
+            String asked = contextUri;
+            if (asked == null) {
+                Esperanto.PlayerState state = PlayerBridge.lastState();
+                if (state == null) {
+                    // ponytail: no stream is opened for one run. It's open while Shuffle+ or Trash Bin is on,
+                    // and the bridge opens again one that ended.
+                    if (Extensions.isOn(context, Extensions.SHUFFLE_PLUS)) {
+                        fail("Spotify hasn't said what's playing yet; try again in a moment", null);
+                    } else {
+                        // Only a Toast: a status would keep saying so after the user turns Shuffle+ on.
+                        RandomSong.toast(context, Extensions.SHUFFLE_PLUS, "Turn Shuffle+ on first");
+                    }
+                    return;
                 }
-                return;
+                queueRevision = state.queueRevision;
+                asked = state.contextUri == null ? "" : state.contextUri;
             }
-            queueRevision = state.queueRevision;
-            String playing = state.contextUri == null ? "" : state.contextUri;
             // Spotify plays each Liked Songs uri as the list's own (report 3.1, Lp/c6x0;->w), so the
             // listing and Play both use that one.
-            contextUri = Esperanto.isLikedSongs(playing) ? Esperanto.LIKED_SONGS : playing;
+            contextUri = Esperanto.isLikedSongs(asked) ? Esperanto.LIKED_SONGS : asked;
             if (contextUri.startsWith("spotify:playlist:")) {
                 list();
             } else if (contextUri.startsWith("spotify:album:")) {

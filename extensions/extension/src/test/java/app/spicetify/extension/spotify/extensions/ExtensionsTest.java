@@ -69,7 +69,9 @@ public class ExtensionsTest {
         assertEquals("Play a random song from all of Spotify, or from your library.",
                 Extensions.description(Extensions.RANDOM_SONG));
         assertEquals("Shuffle+", Extensions.title(Extensions.SHUFFLE_PLUS));
-        assertEquals("Shuffle what's playing in a truly random order.", Extensions.description(Extensions.SHUFFLE_PLUS));
+        assertEquals("Shuffle a playlist, album or Liked Songs in a truly random order. Long-press the shuffle button"
+                        + " in Now Playing, or open a playlist's menu and choose Shuffle+ this playlist.",
+                Extensions.description(Extensions.SHUFFLE_PLUS));
         assertEquals("Hide podcasts", Extensions.title(Extensions.HIDE_PODCASTS));
         assertEquals("Remove podcasts and episodes from Home, Search and your Library's filters.",
                 Extensions.description(Extensions.HIDE_PODCASTS));

@@ -660,7 +660,8 @@ public final class MarketplaceScreen {
                     + (theme.kind == Marketplace.Kind.EXTENSION && theme.androidId == null ? " · Desktop only" : "");
             row.title.setText(theme.title);
             row.subtitle.setText(subtitle);
-            row.description.setText(theme.description);
+            // An extension with an Android version says what it does on Android; others keep the manifest's.
+            row.description.setText(theme.androidId != null ? Extensions.description(theme.androidId) : theme.description);
             previews.load(theme.previewUrl, row.image, rowWidthPx);
             // A preset card shows a strip of its colors in place of the image.
             String preset = presets.get(theme);

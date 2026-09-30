@@ -449,17 +449,56 @@ public class ShufflePlusTest {
         assertEquals("only the stream", 1, router.requests.size());
     }
 
+    // ---- A list asked for, from the playlist menu ----
+
+    @Test
+    public void aPlaylistAskedForIsListedAndPlayedBeforeSpotifySaysWhatsPlaying() throws Exception {
+        Extensions.setOn(context, Extensions.SHUFFLE_PLUS, true);
+        assertEquals(GET_STATE, router.next().uri); // open, and no state has come yet
+        String playlist = "spotify:playlist:asked";
+
+        ShufflePlus.shuffle(context, playlist, 0, new Random(SEED));
+
+        FakeRequest get = router.next();
+        assertEquals(PLAYLIST_GET, get.uri);
+        assertArrayEquals(Esperanto.playlistGet(playlist, 0, 500, false), get.body);
+        List<String> songs = Arrays.asList("spotify:track:a", "spotify:track:b", "spotify:track:c");
+        get.callback.onResponse(200, RandomSongTest.playlistPage(3, songs.toArray(new String[0])));
+        FakeRequest play = router.next();
+        assertEquals(PLAY, play.uri);
+        assertArrayEquals(Esperanto.playOrder(playlist, shuffled(songs)), play.body);
+        play.callback.onResponse(200, new byte[0]);
+
+        awaitStatus("Shuffled 3 songs");
+        assertNull("still nothing said about what's playing", PlayerBridge.lastState());
+        assertRunSentFromTheBridgeThread();
+    }
+
+    @Test
+    public void likedSongsAskedForWhileAnotherListPlaysIsListedAndPlayedAsTheListUri() throws Exception {
+        playing("spotify:playlist:other");
+
+        ShufflePlus.shuffle(context, "spotify:collection:tracks", 0, new Random(SEED));
+
+        FakeRequest get = router.next();
+        assertArrayEquals(Esperanto.playlistGet(Esperanto.LIKED_SONGS, 0, 500, false), get.body);
+        List<String> liked = Arrays.asList("spotify:track:a", "spotify:track:b", "spotify:track:c");
+        get.callback.onResponse(200, RandomSongTest.playlistPage(3, liked.toArray(new String[0])));
+        FakeRequest play = router.next();
+        assertArrayEquals(Esperanto.playOrder(Esperanto.LIKED_SONGS, shuffled(liked)), play.body);
+        play.callback.onResponse(200, new byte[0]);
+
+        awaitStatus("Shuffled 3 songs");
+    }
+
     // ---- Registration ----
 
     @Test
-    public void theMenuActionAndTheCardButtonStartARunOnTheBridgeThread() throws Exception {
+    public void theCardButtonStartsARunOnTheBridgeThread() throws Exception {
         playing("spotify:playlist:p");
         Button button = (Button) Extensions.controls(Extensions.SHUFFLE_PLUS).create(context);
         assertEquals("Shuffle+ what's playing", button.getText().toString());
 
-        // Each run ends at its first request, which fails, so the next one starts clean.
-        Extensions.action("shuffle_plus").run(context);
-        endWith("menu");
         button.performClick();
         endWith("button");
         assertRunSentFromTheBridgeThread();

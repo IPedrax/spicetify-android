@@ -28,6 +28,9 @@ private const val HIDE_PODCASTS = "Lapp/spicetify/extension/spotify/extensions/H
 private const val SECTION = "Lcom/spotify/casita/v1/resolved/Section;"
 private const val PROVIDED = "Lcom/spotify/casita/v1/resolved/Provided;"
 private const val SHUFFLE_BUTTON = "Lp/xkp;"
+private const val LIST_MENU = "Lp/sv70;"
+private const val PLAYLIST_MENU_PROVIDER =
+    "Lapp/spicetify/extension/spotify/extensions/nativebridge/PlaylistMenuProvider;"
 
 // Every protobuf field number the extension's Esperanto.java writes or reads, as class#NAME_FIELD_NUMBER.
 // These classes keep their names and constants, so a build that renumbers a field fails here. Not covered:
@@ -160,6 +163,16 @@ val extensionsPatch = bytecodePatch(
             throw PatchException("Spotify extensions ABI changed: $SHUFFLE_BUTTON. Use the verified Spotify 9.1.80.2221 APK.")
         }
 
+        // M1 (entry-points report 3.5): the list menu, which playlists and Liked Songs open, gets one more
+        // item provider. v4 holds the providers until index 4 stores them.
+        val listMenu = mutableClassDefBy(LIST_MENU).methods.single {
+            it.name == "<init>" &&
+                it.parameterTypes == listOf("Lp/y3w0;", "Lp/vz1;", "Ljava/util/List;", "Ljava/util/List;", "Lp/a94;")
+        }
+        if (!isItemProvidersStore(listMenu.implementation!!.instructions.getOrNull(4))) {
+            throw PatchException("Spotify extensions ABI changed: $LIST_MENU. Use the verified Spotify 9.1.80.2221 APK.")
+        }
+
         constructor.addInstructions(index,
             "invoke-static/range {p0 .. p0}, Lapp/spicetify/extension/spotify/extensions/PlayerBridge;->onCosmos(Ljava/lang/Object;)V")
         trackMenu.addInstructions(1678, """
@@ -208,6 +221,10 @@ val extensionsPatch = bytecodePatch(
         """.trimIndent())
         shuffleButton.addInstructions(62,
             "invoke-static {v2}, Lapp/spicetify/extension/spotify/extensions/NowPlayingShuffle;->onButton(Landroid/view/View;)V")
+        listMenu.addInstructions(4, """
+            invoke-static {v4}, $PLAYLIST_MENU_PROVIDER->providers(Ljava/util/List;)Ljava/util/List;
+            move-result-object v4
+        """.trimIndent())
         enableSetting("extensions")
     }
 }
@@ -259,6 +276,14 @@ internal fun isShuffleButtonEnd(instructions: List<Instruction>, index: Int): Bo
         (store as TwoRegisterInstruction).registerA == 2 && store.registerB == 4 &&
         isHookSite(instructions.getOrNull(index), Opcode.RETURN_VOID)
 }
+
+/**
+ * Whether [instruction] is `iput-object v4, v0, Lp/sv70;->d`, the list menu's constructor storing its
+ * item providers, which M1 replaces in v4 first.
+ */
+internal fun isItemProvidersStore(instruction: Instruction?): Boolean =
+    isHookSite(instruction, Opcode.IPUT_OBJECT, "$LIST_MENU->d:Ljava/util/List;") &&
+        (instruction as TwoRegisterInstruction).registerA == 4 && instruction.registerB == 0
 
 /** Whether [instruction] is `new-instance v1, Lp/krj;`, the menu model that T1 and T2 insert before. */
 internal fun isMenuModel(instruction: Instruction?): Boolean =

@@ -290,6 +290,7 @@ class VerifySettingsDexTest {
                 () -> VerifySettingsDex.classes.remove(B + "RendererProvider;"));
         reject("altered menu bridge", () -> mutate(VerifySettingsDex.MENU_BRIDGE + "MenuBridge;", "track",
                 c -> c.addFirst(new ImmutableInstruction10x(Opcode.NOP))));
+        reject("missing list menu interface", () -> VerifySettingsDex.classes.remove("Lp/spj;"));
         reject("missing native target", () -> VerifySettingsDex.classes.remove("Lp/xh0;"));
         reject(
                 "missing navigator method",

@@ -919,6 +919,22 @@ public class MarketplaceScreenTest {
     }
 
     @Test
+    public void anAndroidExtensionsCardSaysWhatItDoesOnAndroidAndADesktopOnlyOneKeepsItsManifestText() {
+        putTwoThemes();
+        putExtensions();
+        responses.put(Marketplace.manifestUrl(CLI), "{\"name\":\"Shuffle+\",\"description\":\"True shuffle on desktop\","
+                + "\"main\":\"Extensions/shuffle+.js\"}");
+        View screen = showScreen().getWindow().getDecorView();
+        ListView list = find(screen, ListView.class);
+        tab(screen, "Extensions").performClick();
+
+        List<String> shuffle = visibleTexts(row(list, "Shuffle+"));
+        assertTrue(shuffle.toString(), shuffle.contains(Extensions.description(Extensions.SHUFFLE_PLUS)));
+        assertFalse(shuffle.contains("True shuffle on desktop"));
+        assertTrue(visibleTexts(row(list, "Lyrics")).contains("Lyrics beside the player"));
+    }
+
+    @Test
     public void anAndroidExtensionsSwitchTurnsItOnAndTheMarketplaceStaysOpen() {
         putTwoThemes();
         putExtensions();

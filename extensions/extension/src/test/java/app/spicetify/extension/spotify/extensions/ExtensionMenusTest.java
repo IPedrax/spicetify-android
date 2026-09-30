@@ -1,10 +1,14 @@
 package app.spicetify.extension.spotify.extensions;
 
+import static org.junit.Assert.assertArrayEquals;
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertFalse;
+import static org.junit.Assert.assertNull;
 import static org.junit.Assert.assertTrue;
 
 import android.content.Context;
+import app.spicetify.extension.spotify.extensions.RandomSongTest.FakeRequest;
+import app.spicetify.extension.spotify.extensions.RandomSongTest.FakeRouter;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collections;
@@ -21,12 +25,18 @@ import org.robolectric.annotation.Config;
 @RunWith(RobolectricTestRunner.class)
 @Config(sdk = 35, manifest = Config.NONE)
 public class ExtensionMenusTest {
+    private static final String PLAY = "sp://esperanto/spotify.player.esperanto.proto.ContextPlayer/Play";
+    private static final String PLAYLIST_GET =
+            "sp://esperanto/spotify.playlist_esperanto.proto.PlaylistDataService/Get";
+
     private final Context context = RuntimeEnvironment.getApplication();
 
     @Before
     public void setUp() {
         Extensions.setAppContext(context);
         TrashBin.clear(context);
+        // The status map outlives a test, so no test may pass on the line the last one left.
+        Extensions.status(null, Extensions.SHUFFLE_PLUS, "not run");
     }
 
     @After
@@ -60,28 +70,26 @@ public class ExtensionMenusTest {
     }
 
     @Test
-    public void randomSongAndShufflePlusAddTheirItemsWithTheShuffleIcon() {
-        Extensions.setOn(context, Extensions.RANDOM_SONG, true);
-        Extensions.setOn(context, Extensions.SHUFFLE_PLUS, true);
+    public void theSongMenuHasOnlyTrashBinsItemInEverySwitchState() {
+        for (int switches = 0; switches < 8; switches++) {
+            boolean trash = (switches & 1) != 0;
+            Extensions.setOn(context, Extensions.TRASH_BIN, trash);
+            Extensions.setOn(context, Extensions.RANDOM_SONG, (switches & 2) != 0);
+            Extensions.setOn(context, Extensions.SHUFFLE_PLUS, (switches & 4) != 0);
 
-        assertEquals(Arrays.asList(
-                        "random_spotify|Random song from Spotify|shuffle",
-                        "random_library|Random song from my library|shuffle",
-                        "shuffle_plus|Shuffle+ what's playing|shuffle"),
-                rows(ExtensionMenus.trackItems(new Track(new Metadata("spotify:track:a")))));
+            assertEquals("switches " + switches,
+                    trash ? Collections.singletonList("trash_song|Throw song to trash|trash") : Collections.emptyList(),
+                    rows(ExtensionMenus.trackItems(new Track(new Metadata("spotify:track:a")))));
+        }
     }
 
     @Test
-    public void withoutAUriThereIsNoTrashItemButTheOthersStayAndTheClickDoesNothing() throws Exception {
+    public void withoutAUriThereIsNoTrashItemAndTheClickDoesNothing() throws Exception {
         Extensions.setOn(context, Extensions.TRASH_BIN, true);
-        Extensions.setOn(context, Extensions.RANDOM_SONG, true);
         Object[] noUri = {new Object(), new Track(null), new Track(new Metadata(""))};
 
         for (Object track : noUri) {
-            assertEquals(Arrays.asList(
-                            "random_spotify|Random song from Spotify|shuffle",
-                            "random_library|Random song from my library|shuffle"),
-                    rows(ExtensionMenus.trackItems(track)));
+            assertTrue(ExtensionMenus.trackItems(track).isEmpty());
             ExtensionMenus.onTrackItem("trash_song", track);
         }
         assertTrue(ExtensionMenus.artistItems(new Object()).isEmpty());
@@ -96,14 +104,64 @@ public class ExtensionMenusTest {
     }
 
     @Test
-    public void aGetLinkThatThrowsDropsOnlyTheTrashItem() {
+    public void aGetLinkThatThrowsDropsTheTrashItem() {
+        Extensions.setOn(context, Extensions.TRASH_BIN, true);
+
+        assertTrue(ExtensionMenus.trackItems(new Track(new ThrowingMetadata())).isEmpty());
+    }
+
+    @Test
+    public void thePlaylistMenuOffersShufflePlusForAPlaylistOrLikedSongsWhileShufflePlusIsOn() {
+        Extensions.setOn(context, Extensions.SHUFFLE_PLUS, true);
+        String[] lists = {"spotify:playlist:p", Esperanto.LIKED_SONGS, "spotify:collection:tracks",
+                "spotify:internal:collection:tracks", "spotify:user:someone:collection"};
+
+        for (String uri : lists) {
+            assertArrayEquals(uri, new String[] {"shuffle_playlist", "Shuffle+ this playlist", "shuffle"},
+                    ExtensionMenus.playlistItem(uri));
+        }
+    }
+
+    @Test
+    public void thePlaylistMenuOffersNothingForAnAlbumOrAnArtistOrWithShufflePlusOff() {
+        Extensions.setOn(context, Extensions.SHUFFLE_PLUS, true);
+        for (String uri : new String[] {"spotify:album:a", "spotify:artist:z", "", null}) {
+            assertNull(uri, ExtensionMenus.playlistItem(uri));
+        }
+
+        Extensions.setOn(context, Extensions.SHUFFLE_PLUS, false);
         Extensions.setOn(context, Extensions.TRASH_BIN, true);
         Extensions.setOn(context, Extensions.RANDOM_SONG, true);
+        assertNull(ExtensionMenus.playlistItem("spotify:playlist:p"));
+        assertNull(ExtensionMenus.playlistItem("spotify:collection:tracks"));
+    }
 
-        assertEquals(Arrays.asList(
-                        "random_spotify|Random song from Spotify|shuffle",
-                        "random_library|Random song from my library|shuffle"),
-                rows(ExtensionMenus.trackItems(new Track(new ThrowingMetadata()))));
+    @Test
+    public void aTapOnThePlaylistItemListsAndPlaysThatPlaylistWithNothingPlaying() throws Exception {
+        FakeRouter router = new FakeRouter();
+        PlayerBridge.attach(router);
+        Extensions.setOn(context, Extensions.SHUFFLE_PLUS, true);
+        FakeRequest stream = router.next();
+        assertEquals("SUB", stream.action);
+        stream.callback.onResponse(200, ShufflePlusTest.state(null, 7)); // nothing loaded
+        String playlist = "spotify:playlist:p";
+
+        ExtensionMenus.onPlaylistItem("shuffle_playlist", playlist);
+
+        FakeRequest get = router.next();
+        assertEquals(PLAYLIST_GET, get.uri);
+        assertArrayEquals(Esperanto.playlistGet(playlist, 0, 500, false), get.body);
+        assertEquals("the tap only posts the run", "Spicetify player bridge", get.thread);
+        get.callback.onResponse(200, RandomSongTest.playlistPage(2, "spotify:track:a", "spotify:track:b"));
+        FakeRequest play = router.next();
+        assertEquals(PLAY, play.uri);
+        // The menu's run shuffles with SecureRandom, so either order of the two songs is right.
+        assertTrue("plays that playlist in a shuffled order",
+                Arrays.equals(Esperanto.playOrder(playlist, Arrays.asList("spotify:track:a", "spotify:track:b")), play.body)
+                        || Arrays.equals(Esperanto.playOrder(playlist,
+                                Arrays.asList("spotify:track:b", "spotify:track:a")), play.body));
+        play.callback.onResponse(200, new byte[0]);
+        RandomSongTest.awaitStatus(Extensions.SHUFFLE_PLUS, "Shuffled 2 songs");
     }
 
     @Test
