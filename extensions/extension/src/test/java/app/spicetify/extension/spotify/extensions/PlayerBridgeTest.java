@@ -309,6 +309,7 @@ public class PlayerBridgeTest {
         assertEquals("spotify:track:x", PlayerBridge.lastState().trackUri);
         assertEquals("Player bridge: connected, spotify:track:x", Extensions.statusLines().get(0));
         reopenedAfter(third, waiting, 1000, 404); // the state set the backoff back to a second
+        assertNull("an error answer forgets the last state", PlayerBridge.lastState());
     }
 
     @Test
