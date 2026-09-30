@@ -292,6 +292,7 @@ class VerifySettingsDexTest {
                 c -> c.addFirst(new ImmutableInstruction10x(Opcode.NOP))));
         reject("missing list menu interface", () -> VerifySettingsDex.classes.remove("Lp/spj;"));
         reject("missing home chip type", () -> VerifySettingsDex.classes.remove("Lp/ztx;"));
+        reject("missing Home pins plan", () -> VerifySettingsDex.classes.remove(VerifySettingsDex.HOME + "HomePins;"));
         reject("missing native target", () -> VerifySettingsDex.classes.remove("Lp/xh0;"));
         reject(
                 "missing navigator method",

@@ -44,10 +44,13 @@ class VerifySettingsDex {
     static final String PREFIX = "Lapp/spicetify/extension/spotify/settings/";
     static final String BRIDGE = PREFIX + "nativebridge/";
     static final String EXTENSIONS = "Lapp/spicetify/extension/spotify/extensions/";
-    // The extensions patch's context menu bridge, and its Home chip bridge, assembled into the same settings.dex.
+    static final String HOME = "Lapp/spicetify/extension/spotify/home/";
+    // The extensions patch's context menu bridge and its Home chip bridge, and the Home pins patch's tile
+    // bridge, assembled into the same settings.dex.
     static final String MENU_BRIDGE = EXTENSIONS + "nativebridge/";
     static final Set<String> MENU_TYPES = Set.of(MENU_BRIDGE + "MenuBridge;", MENU_BRIDGE + "MenuAction;",
-            MENU_BRIDGE + "PlaylistMenuProvider;", MENU_BRIDGE + "HomeChipBridge;");
+            MENU_BRIDGE + "PlaylistMenuProvider;", MENU_BRIDGE + "HomeChipBridge;",
+            HOME + "nativebridge/HomeTileBridge;");
 
     static byte[] canonical(ClassDef definition) {
         var pool = new DexPool(Opcodes.forApi(35));
@@ -154,7 +157,7 @@ class VerifySettingsDex {
         }
         System.out.println(
                 "Settings DEX verified: one startup hook, one native settings row hook,"
-                        + " capabilities, analytics, four bridge classes and four extensions bridge classes");
+                        + " capabilities, analytics, four bridge classes and five extensions and Home bridge classes");
     }
 
     static void verify(boolean sharing, boolean theme) {
@@ -173,7 +176,7 @@ class VerifySettingsDex {
     // reference that the bundle shares, so each class is link-checked too.
     static void verifyMenuBridge() {
         require(expectedMenus.keySet().equals(MENU_TYPES),
-                "Canonical bundle must contain the four extensions bridge classes");
+                "Canonical bundle must contain the five extensions and Home bridge classes");
         for (var type : MENU_TYPES) {
             var definition = classes.get(type);
             require(definition != null && Arrays.equals(expectedMenus.get(type), canonical(definition)),
@@ -464,8 +467,8 @@ class VerifySettingsDex {
     }
 
     // Checks class c the way ART will link it: register bounds, invoke arity, and that each reference
-    // into Lp/, kotlin or our own packages exists, is public or c's own, and matches its instruction's
-    // static-ness. Returns how many references it resolved.
+    // into Lp/, kotlin or our own packages (settings, extensions and home) exists, is public or c's own,
+    // and matches its instruction's static-ness. Returns how many references it resolved.
     static int verifyLinks(ClassDef c) {
         int checked = 0;
         for (var iface : c.getInterfaces()) {
@@ -529,7 +532,8 @@ class VerifySettingsDex {
                     if (!mr.getDefiningClass().startsWith("Lp/")
                             && !mr.getDefiningClass().startsWith("Lkotlin/")
                             && !mr.getDefiningClass().startsWith(PREFIX)
-                            && !mr.getDefiningClass().startsWith(EXTENSIONS)) {
+                            && !mr.getDefiningClass().startsWith(EXTENSIONS)
+                            && !mr.getDefiningClass().startsWith(HOME)) {
                         continue;
                     }
                     var target = method(mr);
@@ -546,7 +550,8 @@ class VerifySettingsDex {
                 } else if (ref instanceof FieldReference fr) {
                     if (!fr.getDefiningClass().startsWith("Lp/")
                             && !fr.getDefiningClass().startsWith(PREFIX)
-                            && !fr.getDefiningClass().startsWith(EXTENSIONS)) {
+                            && !fr.getDefiningClass().startsWith(EXTENSIONS)
+                            && !fr.getDefiningClass().startsWith(HOME)) {
                         continue;
                     }
                     var target = field(fr);
@@ -565,7 +570,8 @@ class VerifySettingsDex {
                 } else if (ref instanceof TypeReference tr
                         && (tr.getType().startsWith("Lp/")
                                 || tr.getType().startsWith(PREFIX)
-                                || tr.getType().startsWith(EXTENSIONS))) {
+                                || tr.getType().startsWith(EXTENSIONS)
+                                || tr.getType().startsWith(HOME))) {
                     require(classes.containsKey(tr.getType()), "Missing type " + tr);
                 }
             }

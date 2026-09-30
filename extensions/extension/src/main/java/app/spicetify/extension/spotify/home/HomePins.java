@@ -3,7 +3,6 @@ package app.spicetify.extension.spotify.home;
 import android.content.Context;
 import android.content.SharedPreferences;
 import app.spicetify.extension.spotify.extensions.Library;
-import java.lang.reflect.Field;
 import java.text.Collator;
 import java.util.ArrayList;
 import java.util.Arrays;
@@ -15,9 +14,14 @@ import org.json.JSONArray;
 import org.json.JSONException;
 import org.json.JSONObject;
 
-/** Reorders only shortcuts supplied by Spotify; it never creates or retains native tile objects. */
+/**
+ * Puts the pinned shortcuts first on Home, and plans a tile for a pin Spotify left out, which HomeTileBridge
+ * builds. It never retains native tile objects.
+ */
 public final class HomePins {
     private static final int MAX_SHORTCUTS = 64;
+    /** Spotify's own cap on the shortcuts grid: Lp/jne1;->u takes 10 tiles before the hook sees them. */
+    private static final int MAX_TILES = 10;
     private static SharedPreferences preferences;
     private static final LinkedHashMap<String, Pin> pins = new LinkedHashMap<>();
     private static final LinkedHashMap<String, String> observed = new LinkedHashMap<>();
@@ -58,7 +62,7 @@ public final class HomePins {
             for (int i = 0; i < Math.min(saved.length(), MAX_SHORTCUTS); i++) {
                 JSONObject pin = saved.getJSONObject(i);
                 // Pins saved before covers were kept have an id and a label instead of a uri and a title.
-                String id = pin.optString("uri", pin.optString("id"));
+                String id = key(pin.optString("uri", pin.optString("id")));
                 if (!validId(id)) continue;
                 pins.put(id, new Pin(pin.optString("title", pin.optString("label")), pin.optString("image", null)));
             }
@@ -79,7 +83,7 @@ public final class HomePins {
      */
     public static synchronized List<Choice> choices(List<Library.Item> library) {
         Map<String, Library.Item> inLibrary = new LinkedHashMap<>();
-        for (Library.Item item : library) if (validId(item.uri)) inLibrary.putIfAbsent(item.uri, item);
+        for (Library.Item item : library) if (validId(key(item.uri))) inLibrary.putIfAbsent(key(item.uri), item);
         boolean refreshed = false;
         for (Map.Entry<String, Pin> pin : pins.entrySet()) {
             Library.Item item = inLibrary.get(pin.getKey());
@@ -103,9 +107,10 @@ public final class HomePins {
         }
         List<Choice> playlists = new ArrayList<>();
         List<Choice> albums = new ArrayList<>();
-        for (Library.Item item : inLibrary.values()) {
-            if (pins.containsKey(item.uri) || observed.containsKey(item.uri)) continue;
-            (item.album ? albums : playlists).add(offer(item.uri, item.title, item.image, false));
+        for (Map.Entry<String, Library.Item> entry : inLibrary.entrySet()) {
+            if (pins.containsKey(entry.getKey()) || observed.containsKey(entry.getKey())) continue;
+            Library.Item item = entry.getValue();
+            (item.album ? albums : playlists).add(offer(entry.getKey(), item.title, item.image, false));
         }
         Collator alphabetically = Collator.getInstance();
         for (List<Choice> group : Arrays.asList(home, playlists, albums)) {
@@ -126,7 +131,8 @@ public final class HomePins {
         if (preferences == null) throw new IllegalStateException("Home pins are not initialized.");
         if (ids == null || ids.size() > MAX_SHORTCUTS) throw new IllegalArgumentException("Too many Home pins.");
         LinkedHashMap<String, Pin> selected = new LinkedHashMap<>();
-        for (String id : ids) {
+        for (String chosen : ids) {
+            String id = key(chosen);
             Pin known = offered.containsKey(id) ? offered.get(id) : pins.get(id);
             if (known == null && !observed.containsKey(id)) {
                 throw new IllegalArgumentException("Choose a shortcut shown in Home pins.");
@@ -153,28 +159,59 @@ public final class HomePins {
         preferences.edit().putString("pins", saved.toString()).apply();
     }
 
-    /** Field names and the constructor call site are checked against the stock DEX before patching. */
-    public static ArrayList<?> reorder(ArrayList<?> input) {
-        if (input == null || input.size() > MAX_SHORTCUTS) return input;
+    /**
+     * The hook's answer, through HomeTileBridge: the rows Home's section {@code sectionId} shows, in order. Each
+     * is one of {@code rows}, or, in the shortcuts section, a String[] {uri, title, image} for a pin Spotify left
+     * out, which the bridge makes a tile of. Null keeps {@code rows}. Home's reducer calls this on whatever thread
+     * emitted, so it only reads memory. Field names and the call site are checked against the stock DEX before
+     * patching.
+     */
+    public static List<Object> plan(String sectionId, ArrayList<?> rows) {
+        if (rows == null || rows.size() > MAX_SHORTCUTS) return null;
+        String[] links = new String[rows.size()];
+        String[] ids = new String[rows.size()];
+        String[] titles = new String[rows.size()];
         try {
-            String[] ids = new String[input.size()];
-            String[] titles = new String[input.size()];
-            for (int i = 0; i < input.size(); i++) {
-                Object row = input.get(i);
-                if (row == null || !row.getClass().getName().equals("p.goz0")) return input;
-                Field itemField = row.getClass().getField("a");
-                Object item = itemField.get(row);
-                if (item == null || !item.getClass().getName().equals("p.nnz0")) return input;
-                ids[i] = (String) item.getClass().getField("d").get(item);
-                titles[i] = (String) item.getClass().getField("b").get(item);
+            for (int i = 0; i < rows.size(); i++) {
+                Object row = rows.get(i);
+                if (row == null || !row.getClass().getName().equals("p.goz0")) return null;
+                Object tile = row.getClass().getField("a").get(row);
+                if (tile == null || !tile.getClass().getName().equals("p.nnz0")) return null;
+                links[i] = key((String) tile.getClass().getField("a").get(tile));
+                ids[i] = key((String) tile.getClass().getField("d").get(tile));
+                titles[i] = (String) tile.getClass().getField("b").get(tile);
             }
-            int[] order = captureAndOrder(ids, titles);
-            ArrayList<Object> result = new ArrayList<>(input.size());
-            for (int index : order) result.add(input.get(index));
-            return result;
         } catch (ReflectiveOperationException | ClassCastException | SecurityException changedNativeModel) {
-            return input;
+            return null;
         }
+        // Spotify's own test for a shortcuts section, Lp/tve1;->t, looks for this in the id too.
+        return arrange(sectionId != null && sectionId.contains("shortcuts"), rows, links, ids, titles);
+    }
+
+    /**
+     * {@code rows} in {@link #captureAndOrder}'s order. With {@code shortcuts}, a pin that no row stands for gets a
+     * tile in its place among the pins, unless a row already opens its uri (the grid keys rows by link) or its title
+     * is unknown. Then the list is cut to Spotify's length, or the pins' if longer, and never past Spotify's cap.
+     */
+    private static synchronized List<Object> arrange(
+            boolean shortcuts, List<?> rows, String[] links, String[] ids, String[] titles) {
+        List<Object> result = new ArrayList<>(rows.size());
+        for (int index : captureAndOrder(ids, titles)) result.add(rows.get(index));
+        if (!shortcuts) return result;
+        List<String> keys = Arrays.asList(links);
+        List<String> entities = Arrays.asList(ids);
+        int place = 0; // the pins' rows lead, in pin order, so this walks through them
+        for (Map.Entry<String, Pin> pin : pins.entrySet()) {
+            int shown = Collections.frequency(entities, pin.getKey());
+            Pin saved = pin.getValue();
+            if (shown == 0 && saved.title != null && !keys.contains(pin.getKey())) {
+                // Spotify's renderers call Uri.parse on the image, which throws on null.
+                result.add(place++, new String[] {pin.getKey(), saved.title, saved.image == null ? "" : saved.image});
+            }
+            place += shown;
+        }
+        int limit = Math.min(MAX_TILES, Math.max(rows.size(), place));
+        return result.size() > limit ? new ArrayList<>(result.subList(0, limit)) : result;
     }
 
     static synchronized int[] captureAndOrder(String[] ids, String[] titles) {
@@ -183,16 +220,26 @@ public final class HomePins {
             for (int i = 0; i < ids.length; i++) result[i] = i;
             return result;
         }
+        String[] keys = new String[ids.length];
+        for (int i = 0; i < ids.length; i++) keys[i] = key(ids[i]);
         observed.clear();
-        for (int i = 0; i < ids.length; i++) {
-            if (validId(ids[i])) observed.put(ids[i], label(titles[i], ids[i]));
+        for (int i = 0; i < keys.length; i++) {
+            if (validId(keys[i])) observed.put(keys[i], label(titles[i], keys[i]));
         }
         int cursor = 0;
         for (String pin : pins.keySet()) {
-            for (int i = 0; i < ids.length; i++) if (pin.equals(ids[i])) result[cursor++] = i;
+            for (int i = 0; i < keys.length; i++) if (pin.equals(keys[i])) result[cursor++] = i;
         }
-        for (int i = 0; i < ids.length; i++) if (!pins.containsKey(ids[i])) result[cursor++] = i;
+        for (int i = 0; i < keys.length; i++) if (!pins.containsKey(keys[i])) result[cursor++] = i;
         return result;
+    }
+
+    /**
+     * Liked Songs has four uris, and the pins, Home's tiles and the library all name it by {@link Library#LIKED_SONGS},
+     * so it's one choice and a pin finds Home's tile whichever uri each uses. Any other uri, or null, stays as it is.
+     */
+    private static String key(String uri) {
+        return Library.isLikedSongs(uri) ? Library.LIKED_SONGS : uri;
     }
 
     private static boolean validId(String id) {

@@ -19,7 +19,7 @@ import java.util.List;
  */
 public final class Library {
     /** Liked Songs as a tile's uri: the form Spotify's navigator routes, of the four the app accepts. */
-    static final String LIKED_SONGS = "spotify:collection:tracks";
+    public static final String LIKED_SONGS = "spotify:collection:tracks";
     /** The cover Spotify itself shows for Liked Songs. */
     static final String LIKED_SONGS_IMAGE = "https://misc.scdn.co/liked-songs/liked-songs-300.png";
 
@@ -89,6 +89,11 @@ public final class Library {
             }
         }
         return Collections.unmodifiableList(items);
+    }
+
+    /** Whether {@code uri} is one of the four uris the app treats as Liked Songs; false for null. */
+    public static boolean isLikedSongs(String uri) {
+        return uri != null && Esperanto.isLikedSongs(uri);
     }
 
     /** Spotify's own name for Liked Songs, in the app's language, or the English one if it has none. */
