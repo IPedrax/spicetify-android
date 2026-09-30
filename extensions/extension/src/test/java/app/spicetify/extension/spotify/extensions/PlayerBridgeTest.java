@@ -428,7 +428,7 @@ public class PlayerBridgeTest {
         marker.await();
     }
 
-    private static void awaitQuietly(CountDownLatch latch) {
+    static void awaitQuietly(CountDownLatch latch) {
         try {
             latch.await(5, TimeUnit.SECONDS);
         } catch (InterruptedException e) {

@@ -3,6 +3,7 @@ package app.spicetify.extension.spotify.extensions;
 import java.io.IOException;
 import java.math.BigInteger;
 import java.util.ArrayList;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.TreeMap;
@@ -11,15 +12,23 @@ import java.util.TreeMap;
  * The esperanto messages the extensions send and receive over {@code sp://esperanto/<service>/
  * <method>}: request builders, response parsers and the player state value. Field numbers come
  * from the marketplace extensions research report, sections 1.2, 2.1 to 2.3 and 3.2 to 3.4, and
- * are checked again at patch time against the installed Spotify build.
+ * the Your Library trace, section 9. They are checked again at patch time against the installed
+ * Spotify build.
  */
 final class Esperanto {
     static final String CONTEXT_PLAYER = "spotify.player.esperanto.proto.ContextPlayer";
     static final String PLAYLIST = "spotify.playlist_esperanto.proto.PlaylistDataService";
     static final String METADATA = "spotify.metadata_esperanto.proto.ClassicMetadataService";
+    /** With an underscore in {@code your_library_esperanto}; the dotted name has no route. */
+    static final String YOUR_LIBRARY = "spotify.your_library_esperanto.proto.YourLibraryService";
     static final String LIKED_SONGS = "spotify:playlist:37i9dQZF1F5p3rmiWPIYgZ";
 
     private static final String BASE62_ALPHABET = "0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ";
+    private static final int FILTER_ALBUM = 0;
+    private static final int FILTER_PLAYLIST = 2;
+    private static final int ENTITY_ALBUM = 2;
+    private static final int ENTITY_PLAYLIST = 4;
+    private static final int LINK_TYPE_TRACK = 4;
 
     private Esperanto() {}
 
@@ -267,6 +276,46 @@ final class Esperanto {
         return request.toByteArray();
     }
 
+    // YourLibraryService (sp://esperanto/spotify.your_library_esperanto.proto.YourLibraryService/All), 9.1.80.2221
+    // Request   1 header, 4 predefined_playlist_configs, 5 update_throttling
+    // Header    11 skip, 12 length (0 = empty page), 14 filters{1 packed enum}, 16 folder_id (int64),
+    //           17 all_playlists, 18 total_count, 22 separate_pinned_items, 25 num_link_types_in_playlists,
+    //           26 ignore_pinning
+    // Filter    0 ALBUM, 1 ARTIST, 2 PLAYLIST, 3 SHOW, 4 BOOK, 100 DOWNLOADED, 101 WRITABLE, 102 BY_YOU
+    // Response  1 header{9 remaining_entities, 12 is_loading, 17 total_count}, 2 entity*, 3 pinned_entity*,
+    //           98 status_code (200 = OK), 99 error
+    // Entity    1 entity_info{2 name, 3 uri}; case 2 album, 3 artist, 4 playlist (Liked Songs too), 6 folder
+    // Playlist  12 number_of_items_per_link_type*{1 link_type (4 TRACK, 63 EPISODE), 2 num_items}
+    // Folder    2 number_of_playlists, 3 number_of_folders; folder uri spotify:user:<u>:folder:<16 hex> = folder_id
+
+    /**
+     * Every playlist, with folders flattened, and every saved album, in one page: {@code header{12
+     * length 0x7fffffff, 14 filters[PLAYLIST, ALBUM], 17 all_playlists, 25 num_link_types_in_playlists,
+     * 26 ignore_pinning}}. A length of 0 would be an empty page. It asks for no predefined playlists,
+     * so the Library's own Liked Songs row stays out.
+     */
+    static byte[] yourLibraryAll() {
+        Wire.Writer filters = new Wire.Writer();
+        filters.bytes(1, packedVarints(FILTER_PLAYLIST, FILTER_ALBUM));
+        Wire.Writer header = new Wire.Writer();
+        header.varint(12, Integer.MAX_VALUE);
+        header.message(14, filters);
+        header.bool(17, true);
+        header.bool(25, true);
+        header.bool(26, true);
+        Wire.Writer request = new Wire.Writer();
+        request.message(1, header);
+        return request.toByteArray();
+    }
+
+    /** The four uris the app treats as Liked Songs ({@code Lp/x46;->E} in 9.1.80.2221). */
+    static boolean isLikedSongs(String uri) {
+        return LIKED_SONGS.equals(uri)
+                || "spotify:collection:tracks".equals(uri)
+                || "spotify:internal:collection:tracks".equals(uri)
+                || uri.startsWith("spotify:user:") && uri.endsWith(":collection");
+    }
+
     // ---- Response parsers ----
 
     /** A page of a playlist or Liked Songs: its total {@code length} and the uris read so far. */
@@ -343,6 +392,134 @@ final class Esperanto {
                 item.skip();
             }
         }
+    }
+
+    /** Where a random song from the library can come from: Liked Songs, a playlist or a saved album. */
+    static final class LibrarySource {
+        String uri;
+        boolean album;
+        /** A playlist's song count from Your Library, or -1 without one, as for albums and Liked Songs. */
+        int trackCount = -1;
+    }
+
+    /** A {@code YourLibraryResponse}: whether it's still loading, and Liked Songs, then each playlist and album once. */
+    static final class Library {
+        boolean loading;
+        List<LibrarySource> sources = new ArrayList<>();
+    }
+
+    /**
+     * Reads a {@link #yourLibraryAll()} answer. {@code entity} and {@code pinned_entity} merge by uri,
+     * first one wins, keeping albums and playlists; folders are dropped, since {@code all_playlists}
+     * lists their playlists. Liked Songs comes first, once, under {@link #LIKED_SONGS}. A status other
+     * than 200 throws with the core's error.
+     */
+    static Library parseYourLibrary(byte[] yourLibraryResponse) throws IOException {
+        Library library = new Library();
+        Map<String, LibrarySource> found = new LinkedHashMap<>();
+        int statusCode = 0;
+        String error = "";
+        Wire.Reader response = new Wire.Reader(yourLibraryResponse);
+        while (response.next()) {
+            switch (response.field()) {
+                case 1:
+                    library.loading = readIsLoading(response.message());
+                    break;
+                case 2:
+                case 3:
+                    readLibraryEntity(response.message(), found);
+                    break;
+                case 98:
+                    statusCode = (int) response.varint();
+                    break;
+                case 99:
+                    error = response.string();
+                    break;
+                default:
+                    response.skip();
+            }
+        }
+        if (statusCode != 200) throw new IOException("status " + statusCode + (error.isEmpty() ? "" : ": " + error));
+        LibrarySource likedSongs = new LibrarySource();
+        likedSongs.uri = LIKED_SONGS;
+        library.sources.add(likedSongs);
+        library.sources.addAll(found.values());
+        return library;
+    }
+
+    private static boolean readIsLoading(Wire.Reader header) throws IOException {
+        boolean loading = false;
+        while (header.next()) {
+            if (header.field() == 12) {
+                loading = header.varint() != 0;
+            } else {
+                header.skip();
+            }
+        }
+        return loading;
+    }
+
+    /** The case comes from the tag, never the content: a member can be an empty message. */
+    private static void readLibraryEntity(Wire.Reader entity, Map<String, LibrarySource> found) throws IOException {
+        LibrarySource source = new LibrarySource();
+        int kind = 0;
+        while (entity.next()) {
+            switch (entity.field()) {
+                case 1:
+                    source.uri = readEntityUri(entity.message());
+                    break;
+                case ENTITY_ALBUM:
+                    kind = ENTITY_ALBUM;
+                    entity.skip();
+                    break;
+                case ENTITY_PLAYLIST:
+                    kind = ENTITY_PLAYLIST;
+                    source.trackCount = readTrackCount(entity.message());
+                    break;
+                default:
+                    entity.skip();
+            }
+        }
+        if (kind == 0 || source.uri == null || source.uri.isEmpty() || isLikedSongs(source.uri)) return;
+        source.album = kind == ENTITY_ALBUM;
+        found.putIfAbsent(source.uri, source);
+    }
+
+    private static String readEntityUri(Wire.Reader entityInfo) throws IOException {
+        String uri = null;
+        while (entityInfo.next()) {
+            if (entityInfo.field() == 3) {
+                uri = entityInfo.string();
+            } else {
+                entityInfo.skip();
+            }
+        }
+        return uri;
+    }
+
+    /** The TRACK entry of {@code number_of_items_per_link_type}, or -1 when there's none. */
+    private static int readTrackCount(Wire.Reader playlist) throws IOException {
+        int tracks = -1;
+        while (playlist.next()) {
+            if (playlist.field() != 12) {
+                playlist.skip();
+                continue;
+            }
+            Wire.Reader count = playlist.message();
+            long linkType = 0;
+            long items = 0;
+            while (count.next()) {
+                if (count.field() == 1) {
+                    linkType = count.varint();
+                } else if (count.field() == 2) {
+                    items = count.varint();
+                } else {
+                    count.skip();
+                }
+            }
+            if (linkType == LINK_TYPE_TRACK) tracks = (int) items;
+        }
+        return tracks;
     }
 
     static List<String> parseAlbumTracks(byte[] getEntityResponse) throws IOException {

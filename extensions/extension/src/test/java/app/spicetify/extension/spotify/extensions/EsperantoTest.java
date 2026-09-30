@@ -292,6 +292,111 @@ public class EsperantoTest {
                 uris);
     }
 
+    // ---- Your Library ----
+
+    @Test
+    public void yourLibraryAllEncodesTheTracesRequestWithItsFieldsInOrder() {
+        // header{12 length 0x7fffffff, 14 filters{1 [PLAYLIST 2, ALBUM 0]}, 17 all_playlists,
+        // 25 num_link_types_in_playlists, 26 ignore_pinning}
+        assertArrayEquals(hexToBytes("0a15" + "60ffffffff07" + "72040a020200" + "880101" + "c80101" + "d00101"),
+                Esperanto.yourLibraryAll());
+    }
+
+    @Test
+    public void parseYourLibraryGivesLikedSongsFirstThenEachPlaylistAndAlbumOnce() throws IOException {
+        Wire.Writer response = new Wire.Writer();
+        response.message(1, new Wire.Writer());
+        response.message(2, libraryEntity("spotify:playlist:p", 4, countedPlaylist(12)));
+        // An album whose member is empty: the case is in the tag.
+        response.message(2, libraryEntity("spotify:album:a", 2, new Wire.Writer()));
+        Wire.Writer folder = new Wire.Writer();
+        folder.varint(2, 3);
+        response.message(2, libraryEntity("spotify:user:u:folder:00000000000000ff", 6, folder));
+        response.message(2, libraryEntity("spotify:collection:tracks", 4, countedPlaylist(40)));
+        response.message(3, libraryEntity("spotify:playlist:p", 4, countedPlaylist(99)));
+        response.varint(98, 200);
+
+        Esperanto.Library library = Esperanto.parseYourLibrary(response.toByteArray());
+
+        assertFalse(library.loading);
+        List<String> uris = new ArrayList<>();
+        for (Esperanto.LibrarySource source : library.sources) uris.add(source.uri);
+        assertEquals(Arrays.asList(Esperanto.LIKED_SONGS, "spotify:playlist:p", "spotify:album:a"), uris);
+        assertFalse(library.sources.get(0).album);
+        assertEquals("Liked Songs is sized by its playable length", -1, library.sources.get(0).trackCount);
+        assertFalse(library.sources.get(1).album);
+        assertEquals("the TRACK count, from the first occurrence", 12, library.sources.get(1).trackCount);
+        assertTrue(library.sources.get(2).album);
+        assertEquals(-1, library.sources.get(2).trackCount);
+    }
+
+    @Test
+    public void parseYourLibraryReportsLoadingAndFailsWithTheErrorOfAStatusOtherThan200() throws IOException {
+        Wire.Writer header = new Wire.Writer();
+        header.bool(12, true);
+        Wire.Writer loading = new Wire.Writer();
+        loading.message(1, header);
+        loading.varint(98, 200);
+        assertTrue(Esperanto.parseYourLibrary(loading.toByteArray()).loading);
+
+        Wire.Writer failed = new Wire.Writer();
+        failed.varint(98, 500);
+        failed.string(99, "database error");
+        try {
+            Esperanto.parseYourLibrary(failed.toByteArray());
+            fail("expected IOException");
+        } catch (IOException expected) {
+            assertEquals("status 500: database error", expected.getMessage());
+        }
+    }
+
+    @Test
+    public void likedSongsGoesByTheFourUrisTheAppAccepts() {
+        assertTrue(Esperanto.isLikedSongs("spotify:playlist:37i9dQZF1F5p3rmiWPIYgZ"));
+        assertTrue(Esperanto.isLikedSongs("spotify:collection:tracks"));
+        assertTrue(Esperanto.isLikedSongs("spotify:internal:collection:tracks"));
+        assertTrue(Esperanto.isLikedSongs("spotify:user:someone:collection"));
+        assertFalse(Esperanto.isLikedSongs("spotify:playlist:37i9dQZF1EYkqdzj48dyYq"));
+        assertFalse(Esperanto.isLikedSongs("spotify:user:someone:collection:artist"));
+        assertFalse(Esperanto.isLikedSongs("spotify:user:someone:playlist:x"));
+    }
+
+    /** A {@code YourLibraryDecoratedEntity} for {@code uri} whose oneof member is field {@code kind}. */
+    static Wire.Writer libraryEntity(String uri, int kind, Wire.Writer member) {
+        Wire.Writer info = new Wire.Writer();
+        info.string(3, uri);
+        Wire.Writer entity = new Wire.Writer();
+        entity.message(1, info);
+        entity.message(kind, member);
+        return entity;
+    }
+
+    /** A {@code YourLibraryPlaylistExtraInfo} counting 2 episodes (link type 63) and {@code tracks} songs (4). */
+    static Wire.Writer countedPlaylist(int tracks) {
+        Wire.Writer playlist = new Wire.Writer();
+        playlist.message(12, linkTypeCount(63, 2));
+        playlist.message(12, linkTypeCount(4, tracks));
+        return playlist;
+    }
+
+    private static Wire.Writer linkTypeCount(int linkType, int items) {
+        Wire.Writer count = new Wire.Writer();
+        count.varint(1, linkType);
+        count.varint(2, items);
+        return count;
+    }
+
+    /** A {@code YourLibraryResponse} with status 200 listing {@code entities}, still loading or not. */
+    static byte[] yourLibrary(boolean loading, Wire.Writer... entities) {
+        Wire.Writer header = new Wire.Writer();
+        header.bool(12, loading);
+        Wire.Writer response = new Wire.Writer();
+        response.message(1, header);
+        for (Wire.Writer entity : entities) response.message(2, entity);
+        response.varint(98, 200);
+        return response.toByteArray();
+    }
+
     @Test
     public void parseResultReturnsTheErrorCode() throws IOException {
         Wire.Writer forbidden = new Wire.Writer();
@@ -328,7 +433,7 @@ public class EsperantoTest {
     // ---- Shared navigation helpers ----
 
     /** The raw bytes of the first length-delimited {@code field} found in {@code data}. */
-    private static byte[] nestedBytes(byte[] data, int field) throws IOException {
+    static byte[] nestedBytes(byte[] data, int field) throws IOException {
         Wire.Reader reader = new Wire.Reader(data);
         while (reader.next()) {
             if (reader.field() == field) {
@@ -353,7 +458,7 @@ public class EsperantoTest {
         return values;
     }
 
-    private static long varintField(byte[] data, int field) throws IOException {
+    static long varintField(byte[] data, int field) throws IOException {
         Wire.Reader reader = new Wire.Reader(data);
         while (reader.next()) {
             if (reader.field() == field) {

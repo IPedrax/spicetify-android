@@ -23,7 +23,8 @@ private const val MENU_BRIDGE = "Lapp/spicetify/extension/spotify/extensions/nat
 
 // Every protobuf field number the extension's Esperanto.java writes or reads, as class#NAME_FIELD_NUMBER.
 // These classes keep their names and constants, so a build that renumbers a field fails here. Not covered:
-// map entries (1 and 2 by protobuf's rules) and BoolPredicate values, an obfuscated enum without constants.
+// map entries (1 and 2 by protobuf's rules), and enum values, since obfuscated enums have no constants:
+// BoolPredicate, and Your Library's Filter (PLAYLIST 2, ALBUM 0) and LinkType (TRACK 4).
 private val esperantoFieldNumbers = mapOf(
     "Lcom/spotify/player/esperanto/proto/EsContextPlayerState\$ContextPlayerState;" to
         mapOf("CONTEXT_URI" to 2, "TRACK" to 7, "PLAYBACK_ID" to 8, "IS_PAUSED" to 14, "QUEUE_REVISION" to 25),
@@ -64,6 +65,22 @@ private val esperantoFieldNumbers = mapOf(
     "Lcom/spotify/metadata/proto/Metadata\$Album;" to mapOf("DISC" to 11),
     "Lcom/spotify/metadata/proto/Metadata\$Disc;" to mapOf("TRACK" to 3),
     "Lcom/spotify/metadata/proto/Metadata\$Track;" to mapOf("GID" to 1),
+    "Lspotify/your_library/esperanto/proto/YourLibraryRequest;" to mapOf("HEADER" to 1),
+    "Lspotify/your_library/esperanto/proto/YourLibraryRequestHeader;" to mapOf(
+        "LENGTH" to 12, "FILTERS" to 14, "ALL_PLAYLISTS" to 17, "NUM_LINK_TYPES_IN_PLAYLISTS" to 25,
+        "IGNORE_PINNING" to 26,
+    ),
+    "Lspotify/your_library/proto/YourLibraryConfig\$YourLibraryFilters;" to mapOf("FILTER" to 1),
+    "Lspotify/your_library/esperanto/proto/YourLibraryResponse;" to
+        mapOf("HEADER" to 1, "ENTITY" to 2, "PINNED_ENTITY" to 3, "STATUS_CODE" to 98, "ERROR" to 99),
+    "Lspotify/your_library/esperanto/proto/YourLibraryResponseHeader;" to mapOf("IS_LOADING" to 12),
+    "Lspotify/your_library/proto/YourLibraryDecoratedEntityOuterClass\$YourLibraryDecoratedEntity;" to
+        mapOf("ENTITY_INFO" to 1, "ALBUM" to 2, "PLAYLIST" to 4),
+    "Lspotify/your_library/proto/YourLibraryDecoratedEntityOuterClass\$YourLibraryEntityInfo;" to mapOf("URI" to 3),
+    "Lspotify/your_library/proto/YourLibraryDecoratedEntityOuterClass\$YourLibraryPlaylistExtraInfo;" to
+        mapOf("NUMBER_OF_ITEMS_PER_LINK_TYPE" to 12),
+    "Lspotify/your_library/proto/YourLibraryDecoratedEntityOuterClass\$NumberOfItemsForLinkType;" to
+        mapOf("LINK_TYPE" to 1, "NUM_ITEMS" to 2),
 ).flatMap { (type, fields) -> fields.map { (name, number) -> "$type#${name}_FIELD_NUMBER" to number } }.toMap()
 
 @Suppress("unused")

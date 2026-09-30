@@ -7,8 +7,9 @@ import java.io.IOException;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.CopyOnWriteArrayList;
-import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
+import java.util.concurrent.ScheduledExecutorService;
+import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicReference;
 
 /**
@@ -18,8 +19,10 @@ import java.util.concurrent.atomic.AtomicReference;
  * <p>
  * Threading: the router answers on Spotify's core thread. There a callback only copies the body
  * and posts it to the one bridge thread, so it never blocks the core, and every {@link Result} and
- * {@link StateListener} runs on the bridge thread. Spotify may hold callbacks weakly, so the bridge
- * keeps each live one in {@link #LIVE} until it answers or is cancelled.
+ * {@link StateListener} runs on the bridge thread. Nothing may block that thread either: a wait is
+ * a {@link #postDelayed}, and a network call runs on a thread of its own. Spotify may hold
+ * callbacks weakly, so the bridge keeps each live one in {@link #LIVE} until it answers or is
+ * cancelled.
  * <p>
  * When Spotify replaces its router, calls still waiting on the old one fail with "bridge not
  * connected", so a {@link Result} can arrive as a failure on router loss.
@@ -29,8 +32,12 @@ public final class PlayerBridge {
     private static final String STATUS_ID = "player_bridge";
     private static final String GET_STATE = "sp://esperanto/" + Esperanto.CONTEXT_PLAYER + "/GetState";
 
-    /** One daemon thread, parked while idle, so tasks run strictly in the order they were posted. */
-    private static final ExecutorService THREAD = Executors.newSingleThreadExecutor(task -> {
+    /**
+     * One daemon thread, parked while idle. {@link #post} is strictly first in, first out: on this
+     * one-thread ScheduledThreadPoolExecutor, execute() schedules with zero delay, so each task is
+     * due the moment it's posted, and tasks due at the same moment run in the order they were posted.
+     */
+    private static final ScheduledExecutorService THREAD = Executors.newSingleThreadScheduledExecutor(task -> {
         Thread thread = new Thread(task, "Spicetify player bridge");
         thread.setDaemon(true);
         return thread;
@@ -278,15 +285,24 @@ public final class PlayerBridge {
         return body == null ? new byte[0] : body.clone();
     }
 
-    /** Runs {@code task} on the bridge thread, after everything posted before it. */
-    private static void post(Runnable task) {
-        THREAD.execute(() -> {
+    /** Runs {@code task} on the bridge thread, after everything posted before it. A task that throws is logged. */
+    static void post(Runnable task) {
+        THREAD.execute(logged(task));
+    }
+
+    /** Runs {@code task} on the bridge thread once {@code delayMillis} have passed; the thread stays free meanwhile. */
+    static void postDelayed(Runnable task, long delayMillis) {
+        THREAD.schedule(logged(task), delayMillis, TimeUnit.MILLISECONDS);
+    }
+
+    private static Runnable logged(Runnable task) {
+        return () -> {
             try {
                 task.run();
             } catch (Throwable e) {
                 Log.w("Spicetify", "A player bridge task failed", e);
             }
-        });
+        };
     }
 
     /** One call. Only its first answer counts, and that answer releases the request, as Spotify's own transport does. */
