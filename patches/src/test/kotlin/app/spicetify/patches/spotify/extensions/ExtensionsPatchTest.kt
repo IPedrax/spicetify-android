@@ -18,6 +18,7 @@ import org.junit.jupiter.api.Test
 
 private const val PROVIDED = "Lcom/spotify/casita/v1/resolved/Provided;"
 private const val ARRAY_LIST = "Ljava/util/ArrayList;"
+private const val BUTTON = "Landroidx/appcompat/widget/AppCompatImageButton;"
 
 class ExtensionsPatchTest {
     @Test
@@ -98,6 +99,26 @@ class ExtensionsPatchTest {
         assertFalse(isItemsGetter(listOf(items(0), ImmutableInstruction11x(Opcode.THROW, 0))))
         assertFalse(isItemsGetter(listOf(field(Opcode.IGET_OBJECT, 0, 1, PROVIDED, "other_", "Lp/ih40;"), returnObject(0))))
     }
+
+    @Test
+    fun `accepts the end of the shuffle button's constructor that N1 goes in before`() {
+        assertTrue(isShuffleButtonEnd(listOf(storeButton(2, 4), returnVoid), 1))
+    }
+
+    @Test
+    fun `refuses any other end of the shuffle button's constructor`() {
+        val end = listOf(storeButton(2, 4), returnVoid)
+        assertFalse(isShuffleButtonEnd(end, 0))
+        assertFalse(isShuffleButtonEnd(end, 2))
+        assertFalse(isShuffleButtonEnd(listOf(storeButton(3, 4), returnVoid), 1))
+        assertFalse(isShuffleButtonEnd(listOf(storeButton(2, 5), returnVoid), 1))
+        assertFalse(isShuffleButtonEnd(listOf(field(Opcode.IPUT_OBJECT, 2, 4, "Lp/xkp;", "h", BUTTON), returnVoid), 1))
+        assertFalse(isShuffleButtonEnd(listOf(field(Opcode.IGET_OBJECT, 2, 4, "Lp/xkp;", "i", BUTTON), returnVoid), 1))
+        assertFalse(isShuffleButtonEnd(listOf(storeButton(2, 4), returnObject(2)), 1))
+    }
+
+    /** `iput-object v[value], v[instance], Lp/xkp;->i`, the shuffle button's constructor storing its button. */
+    private fun storeButton(value: Int, instance: Int) = field(Opcode.IPUT_OBJECT, value, instance, "Lp/xkp;", "i", BUTTON)
 
     /** `iget-object v[register], v1, Provided;->items_`, v1 being `this` in the two-register getter. */
     private fun items(register: Int) = field(Opcode.IGET_OBJECT, register, 1, PROVIDED, "items_", "Lp/ih40;")

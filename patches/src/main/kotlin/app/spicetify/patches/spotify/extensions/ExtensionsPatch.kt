@@ -16,6 +16,7 @@ import com.android.tools.smali.dexlib2.Opcode
 import com.android.tools.smali.dexlib2.iface.instruction.Instruction
 import com.android.tools.smali.dexlib2.iface.instruction.OneRegisterInstruction
 import com.android.tools.smali.dexlib2.iface.instruction.ReferenceInstruction
+import com.android.tools.smali.dexlib2.iface.instruction.TwoRegisterInstruction
 import com.android.tools.smali.dexlib2.iface.reference.MethodReference
 import com.android.tools.smali.dexlib2.iface.reference.TypeReference
 import com.android.tools.smali.dexlib2.iface.value.IntEncodedValue
@@ -26,6 +27,7 @@ private const val MENU_BRIDGE = "Lapp/spicetify/extension/spotify/extensions/nat
 private const val HIDE_PODCASTS = "Lapp/spicetify/extension/spotify/extensions/HidePodcasts;"
 private const val SECTION = "Lcom/spotify/casita/v1/resolved/Section;"
 private const val PROVIDED = "Lcom/spotify/casita/v1/resolved/Provided;"
+private const val SHUFFLE_BUTTON = "Lp/xkp;"
 
 // Every protobuf field number the extension's Esperanto.java writes or reads, as class#NAME_FIELD_NUMBER.
 // These classes keep their names and constants, so a build that renumbers a field fails here. Not covered:
@@ -149,6 +151,15 @@ val extensionsPatch = bytecodePatch(
             listOf("I", "Lp/m740;", "Ljava/util/ArrayList;", "Ljava/util/List;", "Ljava/util/List;", "Z", "I"), 1,
             Opcode.IPUT, "Lp/j290;->a:I")
 
+        // N1 (entry-points report 2.3): Now Playing's shuffle button gets its long-press at the end of its
+        // constructor, where v2 still holds the button that index 61 stored.
+        val shuffleButton = mutableClassDefBy(SHUFFLE_BUTTON).methods.single {
+            it.name == "<init>" && it.parameterTypes == listOf("Landroid/content/Context;")
+        }
+        if (!isShuffleButtonEnd(shuffleButton.implementation!!.instructions, 62)) {
+            throw PatchException("Spotify extensions ABI changed: $SHUFFLE_BUTTON. Use the verified Spotify 9.1.80.2221 APK.")
+        }
+
         constructor.addInstructions(index,
             "invoke-static/range {p0 .. p0}, Lapp/spicetify/extension/spotify/extensions/PlayerBridge;->onCosmos(Ljava/lang/Object;)V")
         trackMenu.addInstructions(1678, """
@@ -195,6 +206,8 @@ val extensionsPatch = bytecodePatch(
             invoke-static {p5}, $HIDE_PODCASTS->filterLibraryChips(Ljava/util/List;)Ljava/util/List;
             move-result-object p5
         """.trimIndent())
+        shuffleButton.addInstructions(62,
+            "invoke-static {v2}, Lapp/spicetify/extension/spotify/extensions/NowPlayingShuffle;->onButton(Landroid/view/View;)V")
         enableSetting("extensions")
     }
 }
@@ -235,6 +248,17 @@ internal fun isItemsGetter(instructions: List<Instruction>): Boolean =
     instructions.size == 2 && isHookSite(instructions[0], Opcode.IGET_OBJECT, "$PROVIDED->items_:Lp/ih40;") &&
         isHookSite(instructions[1], Opcode.RETURN_OBJECT) &&
         instructions.all { (it as OneRegisterInstruction).registerA == 0 }
+
+/**
+ * Whether [index] holds N1's place in the shuffle button's constructor: `return-void`, right after
+ * `iput-object v2, v4, Lp/xkp;->i`, which stores the button that N1 passes on from v2.
+ */
+internal fun isShuffleButtonEnd(instructions: List<Instruction>, index: Int): Boolean {
+    val store = instructions.getOrNull(index - 1)
+    return isHookSite(store, Opcode.IPUT_OBJECT, "$SHUFFLE_BUTTON->i:Landroidx/appcompat/widget/AppCompatImageButton;") &&
+        (store as TwoRegisterInstruction).registerA == 2 && store.registerB == 4 &&
+        isHookSite(instructions.getOrNull(index), Opcode.RETURN_VOID)
+}
 
 /** Whether [instruction] is `new-instance v1, Lp/krj;`, the menu model that T1 and T2 insert before. */
 internal fun isMenuModel(instruction: Instruction?): Boolean =

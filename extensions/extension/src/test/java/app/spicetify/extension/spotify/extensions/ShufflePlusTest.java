@@ -512,7 +512,7 @@ public class ShufflePlusTest {
     }
 
     /** A {@code ContextPlayerState} in {@code contextUri} at {@code queueRevision}. */
-    private static byte[] state(String contextUri, long queueRevision) {
+    static byte[] state(String contextUri, long queueRevision) {
         return state(contextUri, "spotify:track:now", "uid-now", queueRevision);
     }
 
