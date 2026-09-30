@@ -1,4 +1,7 @@
+import com.android.tools.smali.dexlib2.AccessFlags;
 import com.android.tools.smali.dexlib2.Opcode;
+import com.android.tools.smali.dexlib2.Opcodes;
+import com.android.tools.smali.dexlib2.dexbacked.DexBackedDexFile;
 import com.android.tools.smali.dexlib2.iface.ClassDef;
 import com.android.tools.smali.dexlib2.iface.Method;
 import com.android.tools.smali.dexlib2.iface.instruction.FiveRegisterInstruction;
@@ -17,7 +20,11 @@ import com.android.tools.smali.dexlib2.immutable.instruction.ImmutableInstructio
 import com.android.tools.smali.dexlib2.immutable.instruction.ImmutableInstruction35c;
 import com.android.tools.smali.dexlib2.immutable.instruction.ImmutableInstruction3rc;
 import com.android.tools.smali.dexlib2.immutable.reference.ImmutableStringReference;
+import com.android.tools.smali.dexlib2.writer.io.MemoryDataStore;
+import com.android.tools.smali.dexlib2.writer.pool.DexPool;
 
+import java.io.IOException;
+import java.nio.ByteBuffer;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
@@ -119,13 +126,39 @@ class VerifySettingsDexTest {
         throw new AssertionError("Accepted invalid fixture: " + name);
     }
 
+    // A bad canonical bridge fails in loadBridge, before verify runs.
+    static void rejectBridge(String name, byte[] dex) {
+        try {
+            VerifySettingsDex.loadBridge(dex);
+        } catch (AssertionError expected) {
+            cases++;
+            System.out.println("Rejected " + name + ": " + expected.getMessage());
+            return;
+        }
+        throw new AssertionError("Accepted invalid fixture: " + name);
+    }
+
+    static byte[] withType(byte[] dex, String type) throws IOException {
+        var pool = new DexPool(Opcodes.forApi(24));
+        for (var definition : new DexBackedDexFile(Opcodes.forApi(24), ByteBuffer.wrap(dex)).getClasses()) {
+            pool.internClass(definition);
+        }
+        pool.internClass(new ImmutableClassDef(
+                type, AccessFlags.PUBLIC.getValue(), "Ljava/lang/Object;", null, null, null, null, null));
+        var output = new MemoryDataStore();
+        pool.writeTo(output);
+        return output.getData();
+    }
+
     public static void main(String[] args) throws Exception {
         VerifySettingsDex.classes = new HashMap<>();
         VerifySettingsDex.load(args[0]);
+        byte[] bridge;
         try (var input = VerifySettingsDexTest.class.getResourceAsStream("/extensions/settings.dex")) {
             if (input == null) throw new AssertionError("Build the canonical bridge first");
-            VerifySettingsDex.loadBridge(input.readAllBytes());
+            bridge = input.readAllBytes();
         }
+        VerifySettingsDex.loadBridge(bridge);
         original = Map.copyOf(VerifySettingsDex.classes);
         VerifySettingsDex.verify(true, true);
         reject("empty menu insertion", () -> mutate(B + "SettingsBridge;", "append", c -> {
@@ -255,6 +288,8 @@ class VerifySettingsDexTest {
         reject(
                 "missing bridge class",
                 () -> VerifySettingsDex.classes.remove(B + "RendererProvider;"));
+        reject("altered menu bridge", () -> mutate(VerifySettingsDex.MENU_BRIDGE + "MenuBridge;", "track",
+                c -> c.addFirst(new ImmutableInstruction10x(Opcode.NOP))));
         reject("missing native target", () -> VerifySettingsDex.classes.remove("Lp/xh0;"));
         reject(
                 "missing navigator method",
@@ -307,6 +342,8 @@ class VerifySettingsDexTest {
                                     }
                                     throw new AssertionError("No invoke fixture");
                                 }));
+        // Last, since a rejected load leaves the expected bridge maps half filled.
+        rejectBridge("extra canonical bridge type", withType(bridge, VerifySettingsDex.MENU_BRIDGE + "Extra;"));
         System.out.println("Settings verifier negative cases passed: " + cases);
     }
 }
