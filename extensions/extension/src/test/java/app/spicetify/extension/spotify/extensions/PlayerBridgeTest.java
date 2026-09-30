@@ -292,6 +292,26 @@ public class PlayerBridgeTest {
     }
 
     @Test
+    public void anErrorAnswerEndsTheStreamWhichOpensAgainAfterTheBackoffUntilAStateArrives() throws Exception {
+        RandomSongTest.FakeRouter waiting = new RandomSongTest.FakeRouter();
+        PlayerBridge.attach(waiting);
+        States states = listen(new States());
+        RandomSongTest.FakeRequest first = waiting.next();
+
+        // Spotify's core answers 404 until its player is ready, and ends the subscription.
+        RandomSongTest.FakeRequest second = reopenedAfter(first, waiting, 1000, 404);
+        assertTrue("the ended subscription is released", first.cancelled);
+        assertEquals("Player bridge: connected (Couldn't read the player state: status 404)",
+                Extensions.statusLines().get(0));
+        RandomSongTest.FakeRequest third = reopenedAfter(second, waiting, 2000, 404); // doubled
+        third.callback.onResponse(200, EsperantoTest.contextPlayerState("spotify:track:x"));
+        assertEquals("spotify:track:x", states.next().trackUri);
+        assertEquals("spotify:track:x", PlayerBridge.lastState().trackUri);
+        assertEquals("Player bridge: connected, spotify:track:x", Extensions.statusLines().get(0));
+        reopenedAfter(third, waiting, 1000, 404); // the state set the backoff back to a second
+    }
+
+    @Test
     public void aStreamSpotifyWontOpenIsTriedAgainASecondLater() throws Exception {
         RandomSongTest.FakeRouter waiting = new RandomSongTest.FakeRouter();
         AtomicBoolean refused = new AtomicBoolean();
@@ -425,8 +445,14 @@ public class PlayerBridgeTest {
         FakeRequest stream = router.only();
 
         byte[] truncated = {0x12, 0x05, 'a'}; // field 2 declares 5 bytes and carries 1
-        stream.callback.onResponse(200, truncated);
-        stream.callback.onResponse(500, new byte[0]);
+        FutureTask<Integer> dueReopen = new FutureTask<>(router.requests::size);
+        RandomSongTest.onBridge(() -> {
+            stream.callback.onResponse(200, truncated);
+            // Behind the answer's handling, and due when a reopen of an ended stream would be.
+            PlayerBridge.post(() -> PlayerBridge.postDelayed(dueReopen, 1000));
+            return null;
+        });
+        assertEquals("the stream is alive, so no new SUB", 1, (int) dueReopen.get(6000, TimeUnit.MILLISECONDS));
         stream.callback.onResponse(200, truncated);
         stream.callback.onResponse(200, EsperantoTest.contextPlayerState("spotify:track:x"));
 
@@ -601,13 +627,25 @@ public class PlayerBridgeTest {
      */
     private static RandomSongTest.FakeRequest reopenedAfter(RandomSongTest.FakeRequest stream,
             RandomSongTest.FakeRouter waiting, long backoff) throws Exception {
+        return reopenedAfter(stream, waiting, backoff, () -> stream.callback.onError(new IllegalStateException("stream gone")));
+    }
+
+    /** The same, with the stream ended by an answer of {@code status}. */
+    private static RandomSongTest.FakeRequest reopenedAfter(RandomSongTest.FakeRequest stream,
+            RandomSongTest.FakeRouter waiting, long backoff, int status) throws Exception {
+        return reopenedAfter(stream, waiting, backoff, () -> stream.callback.onResponse(status, new byte[0]));
+    }
+
+    /** The same, with the stream ended by {@code end}. */
+    private static RandomSongTest.FakeRequest reopenedAfter(RandomSongTest.FakeRequest stream,
+            RandomSongTest.FakeRouter waiting, long backoff, Runnable end) throws Exception {
         int sent = waiting.requests.size();
         FutureTask<Integer> sooner = new FutureTask<>(waiting.requests::size);
         FutureTask<Integer> onTime = new FutureTask<>(waiting.requests::size);
         RandomSongTest.onBridge(() -> {
-            PlayerBridge.postDelayed(sooner, backoff - 1); // before the error, so due before its reopen
-            stream.callback.onError(new IllegalStateException("stream gone"));
-            PlayerBridge.post(() -> PlayerBridge.postDelayed(onTime, backoff)); // after the error's handling
+            PlayerBridge.postDelayed(sooner, backoff - 1); // before the end, so due before its reopen
+            end.run();
+            PlayerBridge.post(() -> PlayerBridge.postDelayed(onTime, backoff)); // after the end's handling
             return null;
         });
         assertEquals("nothing reopened within " + (backoff - 1) + " ms",

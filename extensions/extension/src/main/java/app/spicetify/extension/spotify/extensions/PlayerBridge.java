@@ -27,7 +27,8 @@ import java.util.concurrent.atomic.AtomicReference;
  * <p>
  * When Spotify replaces its router, calls still waiting on the old one fail with "bridge not
  * connected", so a {@link Result} can arrive as a failure on router loss. A state stream that ends,
- * or that Spotify won't open, opens again after a backoff while anything listens.
+ * answers an error status, or that Spotify won't open, opens again after a backoff while anything
+ * listens.
  */
 public final class PlayerBridge {
     static final String NOT_CONNECTED = "bridge not connected";
@@ -280,12 +281,25 @@ public final class PlayerBridge {
         if (closing.cancel != null) release(closing.cancel);
     }
 
-    /** On the bridge thread. A state that can't be read is reported once per stream, which stays open. */
+    /**
+     * On the bridge thread. An answer other than 200 ends the stream, as a stream error does: Spotify's
+     * core ends the subscription after one, such as the 404 it answers before its player is ready. A
+     * state that can't be read is reported once per stream, which stays open, since it's alive.
+     */
     private static void onState(Stream from, int status, byte[] body) {
         if (from != stream) return; // the old stream had it in flight
+        if (status != 200) {
+            synchronized (LOCK) {
+                if (from != stream) return;
+                closeStream();
+                if (!LISTENERS.isEmpty()) reopenLater();
+            }
+            Log.w("Spicetify", "The player state stream answered status " + status);
+            report("Couldn't read the player state: status " + status);
+            return;
+        }
         Esperanto.PlayerState state;
         try {
-            if (status != 200) throw new IOException("status " + status);
             state = Esperanto.parseState(body);
         } catch (IOException e) {
             Log.w("Spicetify", "Couldn't read the player state", e);
