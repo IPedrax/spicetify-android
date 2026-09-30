@@ -38,7 +38,6 @@ final class TrashBin {
     private static final String SONGS_KEY = "songs";
     private static final String ARTISTS_KEY = "artists";
     private static final String ACTION_TRASH_SONG = "trash_song";
-    private static final int FORBIDDEN = 1;
 
     private static final Set<String> SONGS = ConcurrentHashMap.newKeySet();
     private static final Set<String> ARTISTS = ConcurrentHashMap.newKeySet();
@@ -225,7 +224,7 @@ final class TrashBin {
                 try {
                     int error = Esperanto.parseResult(body);
                     Extensions.status(context, Extensions.TRASH_BIN,
-                            error == FORBIDDEN ? "Spotify refused the skip" : "Skipped " + trackUri);
+                            error == Esperanto.FORBIDDEN ? "Spotify refused the skip" : "Skipped " + trackUri);
                 } catch (Throwable e) {
                     Log.w("Spicetify", "Trash Bin couldn't read the skip result", e);
                 }

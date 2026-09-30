@@ -22,6 +22,9 @@ final class Esperanto {
     /** With an underscore in {@code your_library_esperanto}; the dotted name has no route. */
     static final String YOUR_LIBRARY = "spotify.your_library_esperanto.proto.YourLibraryService";
     static final String LIKED_SONGS = "spotify:playlist:37i9dQZF1F5p3rmiWPIYgZ";
+    /** Two of {@link #parseResult}'s answers; the others are 2 NOT_FOUND and 3 CONFLICT. */
+    static final int OK = 0;
+    static final int FORBIDDEN = 1;
 
     private static final String BASE62_ALPHABET = "0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ";
     private static final int FILTER_ALBUM = 0;

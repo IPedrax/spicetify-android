@@ -258,6 +258,23 @@ public class TrashBinTest {
         assertEquals(SKIP_NEXT, router.requests.get(2).uri);
     }
 
+    @Test
+    public void autoSkipGoesOnAfterTheStreamEndsWithNothingPressed() throws Exception {
+        // Trash Bin's listener alone: nothing else listens, and nobody presses anything.
+        RandomSongTest.FakeRouter waiting = new RandomSongTest.FakeRouter();
+        PlayerBridge.attach(waiting);
+        Extensions.setOn(context, Extensions.TRASH_BIN, true);
+        TrashBin.setSong(context, "spotify:track:after-error", true);
+        waiting.next().callback.onError(new IllegalStateException("stream gone"));
+
+        RandomSongTest.FakeRequest reopened = waiting.next(); // the bridge's own retry, a second later
+        assertEquals("SUB", reopened.action);
+        assertEquals(GET_STATE, reopened.uri);
+        reopened.callback.onResponse(200, stateBytes("spotify:track:after-error", "trk-after-error-test"));
+
+        assertEquals("Trash Bin skips again", SKIP_NEXT, waiting.next().uri);
+    }
+
     // ---- Helpers ----
 
     private static Esperanto.PlayerState state(String trackUri, String trackUid) {

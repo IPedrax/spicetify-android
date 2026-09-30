@@ -1,0 +1,203 @@
+package app.spicetify.extension.spotify.extensions;
+
+import android.content.Context;
+import android.util.Log;
+import java.io.IOException;
+import java.security.SecureRandom;
+import java.util.ArrayList;
+import java.util.Collections;
+import java.util.List;
+import java.util.Random;
+
+/**
+ * Shuffle+ (desktop {@code shuffle+.js}, spec section 3): lists every song of the playlist, album or
+ * Liked Songs that's playing, shuffles them with Fisher-Yates, and plays that exact order with
+ * Spotify's own shuffle off.
+ * <p>
+ * Threading: a run starts on the main thread, from the track menu or the card's button, and returns
+ * at once: it only posts its first step to the bridge thread. Each later step runs there too, in the
+ * last one's callback, and none of them waits: a retry for a list still loading is put off with
+ * postDelayed. Toasts are posted back to the main thread.
+ */
+final class ShufflePlus {
+    /** A playlist or Liked Songs is listed this many songs at a time. */
+    private static final int PAGE = 500;
+    private static final String UNSUPPORTED = "Shuffle+ works on playlists, albums and Liked Songs";
+    private static final String REFUSED = "Spotify refused Shuffle+ (free accounts can't choose the order)";
+    /**
+     * The bridge streams the player state only while something listens, so this listens and does
+     * nothing else: while Shuffle+ is on, {@link PlayerBridge#lastState()} knows what's playing even
+     * with Trash Bin off.
+     */
+    private static final PlayerBridge.StateListener KEEP_ALIVE = state -> {};
+    /** Not a 64-bit generator, which can reach only a sliver of the orders of a list past 20 songs. */
+    private static final Random RANDOM = new SecureRandom();
+
+    /**
+     * Plays the shuffled order with SetQueue then SkipNext, as desktop does, instead of Play with one
+     * explicit page. The device gate turns it on here if Play doesn't keep the order.
+     */
+    static boolean useQueueFallback = false;
+
+    private ShufflePlus() {}
+
+    static void register() {
+        Extensions.register(Extensions.SHUFFLE_PLUS, context ->
+                RandomSong.button(context, "Shuffle+ what's playing", ShufflePlus::shuffleWhatsPlaying));
+        // The track menu's item runs the action with this id (ExtensionMenus).
+        Extensions.registerAction(Extensions.SHUFFLE_PLUS, ShufflePlus::shuffleWhatsPlaying);
+        Extensions.onSwitch(Extensions.SHUFFLE_PLUS, ShufflePlus::onSwitch);
+    }
+
+    /**
+     * Adds the keep-alive listener when Shuffle+ turns on, and removes it when it turns off. The
+     * bridge closes the stream only when its last listener goes, so Trash Bin's keeps it open.
+     * Synchronized, so an on from Spotify's start can't add the listener after an off from the
+     * switch has removed it.
+     */
+    private static synchronized void onSwitch(Context context, boolean on) {
+        if (!on) {
+            PlayerBridge.removeStateListener(KEEP_ALIVE);
+        } else if (Extensions.isOn(context, Extensions.SHUFFLE_PLUS)) {
+            PlayerBridge.addStateListener(KEEP_ALIVE);
+        }
+    }
+
+    /**
+     * Fisher-Yates, the textbook descending-index swap: each index from the last down to 1 swaps with
+     * a uniformly chosen index at or below it. {@link Collections#shuffle(List, Random)} is documented
+     * to do exactly that.
+     */
+    static <T> void fisherYates(List<T> list, Random random) {
+        Collections.shuffle(list, random);
+    }
+
+    /** The {@code shuffle_plus} action and the card's button. On the main thread, it only posts the run. */
+    static void shuffleWhatsPlaying(Context context) {
+        shuffleWhatsPlaying(context, RandomSong.LOADING_RETRY_MILLIS, RANDOM);
+    }
+
+    static void shuffleWhatsPlaying(Context context, long loadingRetryMillis, Random random) {
+        try {
+            PlayerBridge.post(new Run(context.getApplicationContext(), loadingRetryMillis, random)::start);
+        } catch (Throwable e) {
+            Log.w("Spicetify", "Couldn't start Shuffle+", e);
+        }
+    }
+
+    /**
+     * One shuffle of what's playing. Its steps run one at a time on the bridge thread: the first is
+     * posted there, a retry is posted there after its delay, and every other step runs in the last
+     * one's bridge callback. So the fields need no lock.
+     */
+    private static final class Run {
+        private final Context context;
+        private final long loadingRetryMillis;
+        private final Random random;
+        private final List<String> uris = new ArrayList<>();
+        private String contextUri;
+        private long queueRevision;
+        private int retries;
+
+        Run(Context context, long loadingRetryMillis, Random random) {
+            this.context = context;
+            this.loadingRetryMillis = loadingRetryMillis;
+            this.random = random;
+        }
+
+        /** Lists a playlist, Liked Songs or an album from the player state; anything else is only told. */
+        void start() {
+            Esperanto.PlayerState state = PlayerBridge.lastState();
+            if (state == null) {
+                // ponytail: no stream is opened for one run. It's open while Shuffle+ or Trash Bin is on,
+                // and the bridge opens again one that ended.
+                if (Extensions.isOn(context, Extensions.SHUFFLE_PLUS)) {
+                    fail("Spotify hasn't said what's playing yet; try again in a moment", null);
+                } else {
+                    // Only a Toast: a status would keep saying so after the user turns Shuffle+ on.
+                    RandomSong.toast(context, Extensions.SHUFFLE_PLUS, "Turn Shuffle+ on first");
+                }
+                return;
+            }
+            queueRevision = state.queueRevision;
+            String playing = state.contextUri == null ? "" : state.contextUri;
+            // Spotify plays each Liked Songs uri as the list's own (report 3.1, Lp/c6x0;->w), so the
+            // listing and Play both use that one.
+            contextUri = Esperanto.isLikedSongs(playing) ? Esperanto.LIKED_SONGS : playing;
+            if (contextUri.startsWith("spotify:playlist:")) {
+                list();
+            } else if (contextUri.startsWith("spotify:album:")) {
+                call(Esperanto.METADATA, "GetEntity", Esperanto.getEntity(contextUri), body -> {
+                    uris.addAll(Esperanto.parseAlbumTracks(body));
+                    play();
+                });
+            } else {
+                RandomSong.tell(context, Extensions.SHUFFLE_PLUS, UNSUPPORTED);
+            }
+        }
+
+        /**
+         * Lists the page after the songs read so far, until the list's length. A page still loading is
+         * asked again later, and an empty page ends the listing, so a length that's off can't loop.
+         */
+        private void list() {
+            call(Esperanto.PLAYLIST, "Get", Esperanto.playlistGet(contextUri, uris.size(), PAGE, false), body -> {
+                Esperanto.PlaylistPage page = Esperanto.parsePlaylistGet(body);
+                if (page.loading) {
+                    if (retries++ == RandomSong.LOADING_RETRIES) throw new IOException("the playlist is still loading");
+                    PlayerBridge.postDelayed(this::list, loadingRetryMillis);
+                    return;
+                }
+                uris.addAll(page.uris);
+                if (!page.uris.isEmpty() && uris.size() < page.length) {
+                    list();
+                } else {
+                    play();
+                }
+            });
+        }
+
+        /** Shuffles the list, then plays it with Play, or with SetQueue then SkipNext as the fallback. */
+        private void play() {
+            if (uris.isEmpty()) {
+                RandomSong.tell(context, Extensions.SHUFFLE_PLUS, "Found no songs to shuffle");
+                return;
+            }
+            fisherYates(uris, random);
+            if (!useQueueFallback) {
+                call(Esperanto.CONTEXT_PLAYER, "Play", Esperanto.playOrder(contextUri, uris), this::played);
+                return;
+            }
+            // The latest revision, since the queue may have moved on while the list loaded.
+            Esperanto.PlayerState now = PlayerBridge.lastState();
+            long revision = now != null ? now.queueRevision : queueRevision;
+            call(Esperanto.CONTEXT_PLAYER, "SetQueue", Esperanto.setQueue(uris, revision), queued -> {
+                if (accepted(queued)) call(Esperanto.CONTEXT_PLAYER, "SkipNext", Esperanto.skipNext(), this::played);
+            });
+        }
+
+        private void played(byte[] body) throws IOException {
+            if (accepted(body)) Extensions.status(context, Extensions.SHUFFLE_PLUS, "Shuffled " + uris.size() + " songs");
+        }
+
+        /** Whether Spotify took the command. A refusal is told as one, and any other error ends the run. */
+        private boolean accepted(byte[] body) throws IOException {
+            int error = Esperanto.parseResult(body);
+            if (error == Esperanto.FORBIDDEN) {
+                RandomSong.tell(context, Extensions.SHUFFLE_PLUS, REFUSED);
+                return false;
+            }
+            if (error != Esperanto.OK) throw new IOException("Spotify answered error " + error);
+            return true;
+        }
+
+        private void call(String service, String method, byte[] request, RandomSong.Step next) {
+            PlayerBridge.call(service, method, request, RandomSong.step(next, this::fail));
+        }
+
+        private void fail(String reason, Throwable e) {
+            Log.w("Spicetify", "Shuffle+ failed: " + reason, e);
+            RandomSong.tell(context, Extensions.SHUFFLE_PLUS, "Couldn't shuffle: " + reason);
+        }
+    }
+}

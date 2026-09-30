@@ -391,13 +391,19 @@ public class RandomSongTest {
     @Test
     public void aLibraryStillLoadingIsAskedAgainLaterWhileTheBridgeThreadRunsOtherWork() throws Exception {
         RandomSong.playFromLibrary(context, 2000);
-        router.next().callback.onResponse(200, EsperantoTest.yourLibrary(true));
-
-        onBridge(() -> null); // the loading answer's step has run, and put off its retry
+        FakeRequest first = router.next();
+        long answered = System.nanoTime();
+        FutureTask<Integer> sent = new FutureTask<>(router.requests::size);
+        onBridge(() -> {
+            first.callback.onResponse(200, EsperantoTest.yourLibrary(true)); // queues the step
+            PlayerBridge.post(sent); // queued behind it, and due before any retry that's put off
+            return null;
+        });
         assertEquals("a task posted after the loading answer runs before the retry",
-                1, (int) onBridge(router.requests::size));
+                1, (int) sent.get(5, TimeUnit.SECONDS));
 
         FakeRequest retry = router.next(); // 2 s later
+        assertTrue("the retry waited its 2 s", TimeUnit.NANOSECONDS.toMillis(retry.at - answered) >= 2000);
         assertEquals(ALL, retry.uri);
         retry.callback.onResponse(200, EsperantoTest.yourLibrary(false));
         router.next().callback.onResponse(200, playlistPage(0)); // Liked Songs, empty
@@ -472,7 +478,7 @@ public class RandomSongTest {
     }
 
     /** Runs {@code task} on the bridge thread, after everything posted before it, and returns its result. */
-    private static <T> T onBridge(Callable<T> task) throws Exception {
+    static <T> T onBridge(Callable<T> task) throws Exception {
         FutureTask<T> run = new FutureTask<>(task);
         PlayerBridge.post(run);
         try {
@@ -484,7 +490,12 @@ public class RandomSongTest {
 
     /** Waits for the extension's line in Spicetify settings to read {@code line}. */
     static void awaitStatus(String line) throws InterruptedException {
-        String expected = "Play a random song: " + line;
+        awaitStatus(Extensions.RANDOM_SONG, line);
+    }
+
+    /** Waits for extension {@code id}'s line in Spicetify settings, shown while it's on, to read {@code line}. */
+    static void awaitStatus(String id, String line) throws InterruptedException {
+        String expected = Extensions.title(id) + ": " + line;
         long deadline = System.currentTimeMillis() + 5000;
         while (!Extensions.statusLines().contains(expected)) {
             assertTrue("no status \"" + line + "\" within 5 s: " + Extensions.statusLines(),
@@ -512,7 +523,12 @@ public class RandomSongTest {
     }
 
     /** A {@code PlaylistGetResponse} with status 200, the playable {@code length} and {@code uris} as its items. */
-    private static byte[] playlistPage(int length, String... uris) {
+    static byte[] playlistPage(int length, String... uris) {
+        return playlistPage(false, length, uris);
+    }
+
+    /** The same, with {@code loading_contents} set when the core is still loading the list. */
+    static byte[] playlistPage(boolean loading, int length, String... uris) {
         Wire.Writer status = new Wire.Writer();
         status.varint(1, 200);
         Wire.Writer data = new Wire.Writer();
@@ -522,6 +538,7 @@ public class RandomSongTest {
             data.message(1, item);
         }
         data.varint(4, length);
+        if (loading) data.bool(6, true);
         Wire.Writer response = new Wire.Writer();
         response.message(1, status);
         response.message(2, data);
@@ -529,7 +546,7 @@ public class RandomSongTest {
     }
 
     /** A {@code GetEntityResponse} for an album with one disc of the tracks {@code gids}. */
-    private static byte[] albumTracks(byte[]... gids) {
+    static byte[] albumTracks(byte[]... gids) {
         Wire.Writer disc = new Wire.Writer();
         for (byte[] gid : gids) {
             Wire.Writer track = new Wire.Writer();
@@ -545,7 +562,7 @@ public class RandomSongTest {
         return response.toByteArray();
     }
 
-    private static byte[] gid(int last) {
+    static byte[] gid(int last) {
         byte[] gid = new byte[16];
         gid[15] = (byte) last;
         return gid;
@@ -567,7 +584,7 @@ public class RandomSongTest {
             FakeRequest request = new FakeRequest(action, uri, body, callback);
             requests.add(request);
             unread.add(request);
-            return () -> {};
+            return () -> request.cancelled = true;
         }
 
         @Override
@@ -589,6 +606,9 @@ public class RandomSongTest {
         final CosmosRouter.Callback callback;
         /** The thread that sent it, since resolve runs on the sender's thread. */
         final String thread = Thread.currentThread().getName();
+        /** When it reached the router, for lower bounds that a slow machine can't break. */
+        final long at = System.nanoTime();
+        volatile boolean cancelled;
 
         FakeRequest(String action, String uri, byte[] body, CosmosRouter.Callback callback) {
             this.action = action;

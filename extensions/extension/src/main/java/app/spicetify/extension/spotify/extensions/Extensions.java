@@ -197,6 +197,11 @@ public final class Extensions {
         } catch (Throwable e) {
             Log.w("Spicetify", "Couldn't register Play a random song", e);
         }
+        try {
+            ShufflePlus.register();
+        } catch (Throwable e) {
+            Log.w("Spicetify", "Couldn't register Shuffle+", e);
+        }
     }
 
     /**

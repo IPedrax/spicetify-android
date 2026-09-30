@@ -23,8 +23,10 @@ import java.util.Set;
 import java.util.concurrent.BlockingQueue;
 import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.FutureTask;
 import java.util.concurrent.LinkedBlockingQueue;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicBoolean;
 import org.junit.After;
 import org.junit.Before;
 import org.junit.Test;
@@ -253,14 +255,18 @@ public class PlayerBridgeTest {
         stream.callback.onResponse(200, EsperantoTest.contextPlayerState("spotify:track:x"));
         states.next();
 
-        stream.callback.onError(new IllegalStateException("stream gone"));
-        flush(router);
+        FutureTask<String> line = new FutureTask<>(() -> Extensions.statusLines().get(0));
+        RandomSongTest.onBridge(() -> {
+            stream.callback.onError(new IllegalStateException("stream gone"));
+            PlayerBridge.post(line); // behind the error's handling, and before its reopen
+            return null;
+        });
 
+        assertEquals("Player bridge: stream error, retrying"
+                + " (The player state stream ended: java.lang.IllegalStateException: stream gone)",
+                line.get(5, TimeUnit.SECONDS)); // the error has been handled by now
         assertTrue("an ended stream is released", stream.cancelled);
         assertNull(PlayerBridge.lastState());
-        assertEquals("Player bridge: stream error, retrying on next use"
-                + " (The player state stream ended: java.lang.IllegalStateException: stream gone)",
-                Extensions.statusLines().get(0));
 
         listen(new States());
         FakeRequest reopened = router.requests.get(router.requests.size() - 1);
@@ -270,6 +276,114 @@ public class PlayerBridgeTest {
         assertEquals("spotify:track:y", states.next().trackUri);
         assertEquals("a good state clears the problem",
                 "Player bridge: connected, spotify:track:y", Extensions.statusLines().get(0));
+    }
+
+    @Test
+    public void anEndedStreamOpensAgainAfterABackoffThatDoublesUntilAStateArrives() throws Exception {
+        RandomSongTest.FakeRouter waiting = new RandomSongTest.FakeRouter();
+        PlayerBridge.attach(waiting);
+        States states = listen(new States());
+
+        RandomSongTest.FakeRequest second = reopenedAfter(waiting.next(), waiting, 1000);
+        RandomSongTest.FakeRequest third = reopenedAfter(second, waiting, 2000); // doubled
+        third.callback.onResponse(200, EsperantoTest.contextPlayerState("spotify:track:x"));
+        states.next(); // a state sets the backoff back to a second
+        reopenedAfter(third, waiting, 1000);
+    }
+
+    @Test
+    public void aStreamSpotifyWontOpenIsTriedAgainASecondLater() throws Exception {
+        RandomSongTest.FakeRouter waiting = new RandomSongTest.FakeRouter();
+        AtomicBoolean refused = new AtomicBoolean();
+        PlayerBridge.attach(new CosmosRouter() {
+            @Override
+            public Cancel resolve(String action, String uri, byte[] body, Callback callback) {
+                if (refused.compareAndSet(false, true)) throw new IllegalStateException("refused");
+                return waiting.resolve(action, uri, body, callback);
+            }
+
+            @Override
+            public boolean destroyed() {
+                return false;
+            }
+        });
+
+        States states = new States();
+        listeners.add(states);
+        FutureTask<String> line = new FutureTask<>(() -> Extensions.statusLines().get(0));
+        RandomSongTest.onBridge(() -> {
+            PlayerBridge.addStateListener(states); // refused, so a reopen is due in a second
+            PlayerBridge.post(line); // due now, so before that reopen
+            return null;
+        });
+
+        assertEquals("Player bridge: stream error, retrying"
+                + " (Couldn't open the player state stream: java.lang.IllegalStateException: refused)",
+                line.get(5, TimeUnit.SECONDS));
+        RandomSongTest.FakeRequest retried = waiting.next();
+        assertEquals("SUB", retried.action);
+        assertEquals(GET_STATE, retried.uri);
+    }
+
+    @Test
+    public void aReopenOpensNothingWhileAStreamIsOpenOrOnceNothingListens() throws Exception {
+        RandomSongTest.FakeRouter waiting = new RandomSongTest.FakeRouter();
+        PlayerBridge.attach(waiting);
+        States first = listen(new States());
+        RandomSongTest.FakeRequest ended = waiting.next();
+
+        // A new listener opens a stream while the reopen is due, and the reopen leaves it alone. The
+        // listener comes in a task queued right behind the error's handling, so before the reopen, and
+        // the probe after the sleep falls due after the reopen, so the bridge runs it after.
+        States second = new States();
+        listeners.add(second);
+        RandomSongTest.onBridge(() -> {
+            ended.callback.onError(new IllegalStateException("stream gone"));
+            PlayerBridge.post(() -> PlayerBridge.addStateListener(second));
+            return null;
+        });
+        RandomSongTest.FakeRequest opened = waiting.next();
+        Thread.sleep(1500);
+        RandomSongTest.onBridge(() -> null);
+        assertEquals("the new listener's stream, and no second one", 2, waiting.requests.size());
+
+        // That stream ends too, and nothing listens by the time its reopen is due, 2 s later. The
+        // listeners go in a task queued right behind the error's handling, so before that reopen.
+        RandomSongTest.onBridge(() -> {
+            opened.callback.onError(new IllegalStateException("stream gone again"));
+            PlayerBridge.post(() -> {
+                PlayerBridge.removeStateListener(first);
+                PlayerBridge.removeStateListener(second);
+            });
+            return null;
+        });
+        Thread.sleep(2500);
+        RandomSongTest.onBridge(() -> null);
+        assertEquals("no stream when nothing listens", 2, waiting.requests.size());
+    }
+
+    @Test
+    public void aNewRouterStartsTheRetryOver() throws Exception {
+        RandomSongTest.FakeRouter old = new RandomSongTest.FakeRouter();
+        PlayerBridge.attach(old);
+        listen(new States());
+        RandomSongTest.FakeRequest ended = old.next();
+        RandomSongTest.FakeRouter replacement = new RandomSongTest.FakeRouter();
+        // The new router comes half a second after the error, by the bridge's own clock. It's scheduled
+        // before the error is even handled, so it falls due after that handling and before the old
+        // router's reopen, however slow the machine.
+        FutureTask<Void> attached = new FutureTask<>(() -> PlayerBridge.attach(replacement), null);
+        RandomSongTest.onBridge(() -> {
+            PlayerBridge.postDelayed(attached, 500);
+            ended.callback.onError(new IllegalStateException("stream gone"));
+            return null;
+        });
+        attached.get(5500, TimeUnit.MILLISECONDS);
+        RandomSongTest.FakeRequest moved = replacement.next(); // the stream moved to it at once
+
+        // Its stream ends too: it reopens a whole second later, not when the old router's reopen was due.
+        reopenedAfter(moved, replacement, 1000);
+        assertEquals("nothing more went to the old router", 1, old.requests.size());
     }
 
     @Test
@@ -426,6 +540,33 @@ public class PlayerBridgeTest {
         PlayerBridge.call("flush", "flush", new byte[0], marker);
         attached.requests.get(attached.requests.size() - 1).callback.onResponse(200, new byte[0]);
         marker.await();
+    }
+
+    /**
+     * Ends {@code stream} and checks, by the bridge's own clock, that its reopen comes {@code backoff}
+     * ms after the error is handled: a probe due 1 ms sooner finds no new request, and one due that
+     * late finds the reopen. The bridge runs tasks in the order they fall due, ties in the order they
+     * were posted, so a slow machine can hold the probes up but can't move them around the reopen.
+     */
+    private static RandomSongTest.FakeRequest reopenedAfter(RandomSongTest.FakeRequest stream,
+            RandomSongTest.FakeRouter waiting, long backoff) throws Exception {
+        int sent = waiting.requests.size();
+        FutureTask<Integer> sooner = new FutureTask<>(waiting.requests::size);
+        FutureTask<Integer> onTime = new FutureTask<>(waiting.requests::size);
+        RandomSongTest.onBridge(() -> {
+            PlayerBridge.postDelayed(sooner, backoff - 1); // before the error, so due before its reopen
+            stream.callback.onError(new IllegalStateException("stream gone"));
+            PlayerBridge.post(() -> PlayerBridge.postDelayed(onTime, backoff)); // after the error's handling
+            return null;
+        });
+        assertEquals("nothing reopened within " + (backoff - 1) + " ms",
+                sent, (int) sooner.get(backoff + 5000, TimeUnit.MILLISECONDS));
+        assertEquals("reopened by " + backoff + " ms",
+                sent + 1, (int) onTime.get(backoff + 5000, TimeUnit.MILLISECONDS));
+        RandomSongTest.FakeRequest reopened = waiting.next();
+        assertEquals("SUB", reopened.action);
+        assertEquals(GET_STATE, reopened.uri);
+        return reopened;
     }
 
     static void awaitQuietly(CountDownLatch latch) {

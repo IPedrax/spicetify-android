@@ -25,12 +25,15 @@ import java.util.concurrent.atomic.AtomicReference;
  * cancelled.
  * <p>
  * When Spotify replaces its router, calls still waiting on the old one fail with "bridge not
- * connected", so a {@link Result} can arrive as a failure on router loss.
+ * connected", so a {@link Result} can arrive as a failure on router loss. A state stream that ends,
+ * or that Spotify won't open, opens again after a backoff while anything listens.
  */
 public final class PlayerBridge {
     static final String NOT_CONNECTED = "bridge not connected";
     private static final String STATUS_ID = "player_bridge";
     private static final String GET_STATE = "sp://esperanto/" + Esperanto.CONTEXT_PLAYER + "/GetState";
+    private static final long FIRST_REOPEN_MILLIS = 1000;
+    private static final long LAST_REOPEN_MILLIS = 60_000;
 
     /**
      * One daemon thread, parked while idle. {@link #post} is strictly first in, first out: on this
@@ -54,6 +57,10 @@ public final class PlayerBridge {
     private static volatile Esperanto.PlayerState lastState;
     /** The latest thing that went wrong, shown on the bridge's settings line until it's resolved. */
     private static volatile String problem;
+    /** The wait before the next reopen: it doubles each time up to a minute, and a state or a new router resets it. */
+    private static long reopenMillis = FIRST_REOPEN_MILLIS; // guarded by LOCK
+    /** A reopen is due on the current router, so another failure meanwhile schedules no second one. */
+    private static boolean reopenDue; // guarded by LOCK
 
     interface Result {
         void done(byte[] body);
@@ -104,7 +111,8 @@ public final class PlayerBridge {
 
     /**
      * Sends everything through {@code cosmos} from now on. Calls still waiting on the old router
-     * fail, and the state stream moves to the new one if anything listens.
+     * fail, and the state stream moves to the new one if anything listens. The reopen backoff starts
+     * over, and a reopen that was due on the old router does nothing.
      */
     static void attach(CosmosRouter cosmos) {
         synchronized (LOCK) {
@@ -112,6 +120,8 @@ public final class PlayerBridge {
             closeStream();
             router = cosmos;
             problem = null;
+            reopenDue = false;
+            reopenMillis = FIRST_REOPEN_MILLIS;
             if (old != null && old != cosmos) failPending(old);
             if (!LISTENERS.isEmpty()) openStream();
         }
@@ -183,15 +193,18 @@ public final class PlayerBridge {
         String note = problem == null ? "" : " (" + problem + ")";
         if (!connected()) return "Player bridge: waiting for Spotify" + note;
         synchronized (LOCK) {
-            // Something listens, yet no stream is open: it ended, or it couldn't open.
-            if (stream == null && !LISTENERS.isEmpty()) return "Player bridge: stream error, retrying on next use" + note;
+            // Something listens, yet no stream is open: it ended, or it couldn't open, and a reopen is due.
+            if (stream == null && !LISTENERS.isEmpty()) return "Player bridge: stream error, retrying" + note;
         }
         Esperanto.PlayerState state = lastState;
         if (state == null || state.trackUri == null) return "Player bridge: connected" + note;
         return "Player bridge: connected, " + state.trackUri + note;
     }
 
-    /** Called with {@link #LOCK} held. Without a live router, the next {@link #attach} opens it. */
+    /**
+     * Called with {@link #LOCK} held. Without a live router, the next {@link #attach} opens it; a
+     * live router that won't open it gets a reopen.
+     */
     private static void openStream() {
         CosmosRouter current = router;
         if (current == null || destroyed(current)) return;
@@ -205,6 +218,28 @@ public final class PlayerBridge {
             LIVE.remove(opened);
             Log.w("Spicetify", "Couldn't open the player state stream", e);
             report("Couldn't open the player state stream: " + e);
+            reopenLater();
+        }
+    }
+
+    /** Called with {@link #LOCK} held: one reopen at a time, after the backoff, which then doubles up to a minute. */
+    private static void reopenLater() {
+        if (reopenDue) return;
+        reopenDue = true;
+        CosmosRouter dueOn = router;
+        postDelayed(() -> reopen(dueOn), reopenMillis);
+        reopenMillis = Math.min(reopenMillis * 2, LAST_REOPEN_MILLIS);
+    }
+
+    /**
+     * On the bridge thread: opens a stream when something listens and none is open. A destroyed
+     * router opens nothing and schedules nothing more; the next {@link #attach} opens the stream.
+     */
+    private static void reopen(CosmosRouter dueOn) {
+        synchronized (LOCK) {
+            if (router != dueOn) return; // attach started over
+            reopenDue = false;
+            if (stream == null && !LISTENERS.isEmpty()) openStream();
         }
     }
 
@@ -237,6 +272,7 @@ public final class PlayerBridge {
             if (from != stream) return; // closed while this one was read
             lastState = state;
             problem = null;
+            reopenMillis = FIRST_REOPEN_MILLIS;
         }
         for (StateListener listener : LISTENERS) {
             try {
@@ -247,11 +283,12 @@ public final class PlayerBridge {
         }
     }
 
-    /** On the bridge thread. The next attach, or the next listener, opens a new stream. */
+    /** On the bridge thread. While anything listens, the stream opens again after the backoff. */
     private static void onStreamError(Stream from, Throwable error) {
         synchronized (LOCK) {
             if (from != stream) return;
             closeStream();
+            if (!LISTENERS.isEmpty()) reopenLater();
         }
         Log.w("Spicetify", "The player state stream ended", error);
         report("The player state stream ended: " + error);
