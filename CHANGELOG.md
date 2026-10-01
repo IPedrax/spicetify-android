@@ -1,3 +1,9 @@
+## [1.1.1](https://github.com/IPedrax/spicetify-android/compare/v1.1.0...v1.1.1) (2026-10-01)
+
+### 🐛 Bug Fixes
+
+* describe the current patches in Morphe Manager ([3eda54f](https://github.com/IPedrax/spicetify-android/commit/3eda54f88cdec8e213de9948fb696bbb1462ac45))
+
 ## [1.1.0](https://github.com/IPedrax/spicetify-android/compare/v1.0.1...v1.1.0) (2026-10-01)
 
 ### 🐛 Bug Fixes

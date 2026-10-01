@@ -1,6 +1,6 @@
 {
   "NOTE": "Do NOT manually edit this file. This file is automatically updated when semantic release (release.yml) runs. Manually editing this file can break your releases and break third party tools that use this file.",
-  "version": "1.1.0",
+  "version": "1.1.1",
   "patches": [
     {
       "name": "Clean sharing links",
@@ -67,7 +67,7 @@
     },
     {
       "name": "Pin shortcuts on Home",
-      "description": "Choose which of Spotify's Home shortcuts appear first in Spicetify settings. Pins are saved on this device. Restart Spotify after changing pins.",
+      "description": "Pick playlists, albums or Liked Songs to pin first on Home, or turn on Show only my pins to hide Spotify's other shortcuts. Pins are saved on this device; restart Spotify after changing them.",
       "default": false,
       "category": null,
       "dependencies": [
@@ -99,7 +99,7 @@
     },
     {
       "name": "Spicetify extensions",
-      "description": "Adds Android versions of Spicetify extensions to the Spicetify Marketplace: Trash Bin, Play a random song, Shuffle+, Hide podcasts and Unavailable songs. Turn each one on in the Marketplace.",
+      "description": "Adds Android versions of Spicetify extensions to the Spicetify Marketplace: Trash Bin, Play a random song, Shuffle+ and Hide podcasts. Turn each one on in the Marketplace's Extensions tab.",
       "default": false,
       "category": null,
       "dependencies": [
@@ -131,7 +131,7 @@
     },
     {
       "name": "Theme colors",
-      "description": "Adds a theme picker to Spicetify settings: presets, Material You and Spicetify themes. Requires Android 14 or later. Some hardcoded colors and animations keep Spotify's look.",
+      "description": "Adds a Theme section to Spicetify settings, with the Spicetify Marketplace for presets, Galaxy V2, community themes and a way to paste your own. Requires Android 14 or later; some hardcoded colors and animations keep Spotify's look.",
       "default": false,
       "category": null,
       "dependencies": [
