@@ -1,3 +1,36 @@
+## [1.1.0](https://github.com/IPedrax/spicetify-android/compare/v1.0.1...v1.1.0) (2026-10-01)
+
+### 🐛 Bug Fixes
+
+* keep the Home shortcuts picker complete while the library loads ([59cbb1a](https://github.com/IPedrax/spicetify-android/commit/59cbb1a747a3418d1607f9356bc62d1ac9f746a7))
+* reopen the player state stream after an error answer ([a2f0739](https://github.com/IPedrax/spicetify-android/commit/a2f07399cf0fd2014998a45308dc0945239db324))
+
+### ✨ New Features
+
+* add a Random pill to Home's filter row ([6887a1b](https://github.com/IPedrax/spicetify-android/commit/6887a1bc03ec0c7d197c1ecdb912e002942943bf))
+* add extension items to track and artist menus ([d56fccb](https://github.com/IPedrax/spicetify-android/commit/d56fccb2e0da31d0781c9eaf0d5c2dfebb15104d))
+* add Hide podcasts ([d363895](https://github.com/IPedrax/spicetify-android/commit/d3638957e1c8e2e0b524fc255458a8fefbc20209))
+* add Play a random song ([cf17616](https://github.com/IPedrax/spicetify-android/commit/cf176164fbd18d1b2188ab1fce72d58e48fae228))
+* add Shuffle+ ([8b063bf](https://github.com/IPedrax/spicetify-android/commit/8b063bf962876b3e221cb133f02fd97be3c15e7e))
+* add Shuffle+ to the playlist menu and move it off the song menu ([b16b25f](https://github.com/IPedrax/spicetify-android/commit/b16b25f7030bf9415e48c6024f056bceca4fcc74))
+* add the Spicetify extensions patch with the player bridge ([12b5469](https://github.com/IPedrax/spicetify-android/commit/12b54694ddd0dbae9ac9b26b885eae2969f22225))
+* add Trash Bin with auto-skip ([19392a9](https://github.com/IPedrax/spicetify-android/commit/19392a9dfc7be92bf9090da031e00045b109c950))
+* add Unavailable songs with tap to play ([f734973](https://github.com/IPedrax/spicetify-android/commit/f73497341809202686fc8bea7db76db5ee38612f))
+* connect extensions to Spotify's player core ([6e02c65](https://github.com/IPedrax/spicetify-android/commit/6e02c65ea26823d1dba3b01387179b2da5329b6d))
+* encode Spotify player and library messages ([8131841](https://github.com/IPedrax/spicetify-android/commit/8131841c91344ae6d19babc2f6ab7a67239665b3))
+* find a version of a song that plays in your country ([9874322](https://github.com/IPedrax/spicetify-android/commit/9874322785d8e87661cb46e16c556b5b0902d0a4))
+* keep Home pins in the order they were picked ([ac814d0](https://github.com/IPedrax/spicetify-android/commit/ac814d0fd315d408d6761b171b83d54b57fde159))
+* list every saved playlist in the Home shortcuts picker ([e99498a](https://github.com/IPedrax/spicetify-android/commit/e99498a1ef9a2d748054612b66b0501c94b34e8c))
+* load Marketplace extensions after themes ([6d1b621](https://github.com/IPedrax/spicetify-android/commit/6d1b621ab833683bc98c5f0ef780f14856111d9c))
+* long-press Now Playing's shuffle button for Shuffle+ ([1eb7ba2](https://github.com/IPedrax/spicetify-android/commit/1eb7ba294a36b3d7d0ec8868aee13fbffa95abf0))
+* option to show only pinned Home shortcuts ([1f6c44e](https://github.com/IPedrax/spicetify-android/commit/1f6c44ebda4569a4801847177bfbc6e88da060f7))
+* read Spicetify Marketplace extensions ([50e539a](https://github.com/IPedrax/spicetify-android/commit/50e539af231520b0d471af9efffdc8601e1bf6c7))
+* reorganize the Spicetify settings page ([f542b2b](https://github.com/IPedrax/spicetify-android/commit/f542b2b40f3020692c66af739c6020f856dd12b5))
+* separate themes and extensions in the Marketplace ([644b328](https://github.com/IPedrax/spicetify-android/commit/644b328a4a5c49449a9c0a8f740cea81d670e848))
+* show pinned playlists on Home even when Spotify leaves them out ([3849dc6](https://github.com/IPedrax/spicetify-android/commit/3849dc6281aba4fbd617570e895d4fc37c911b03))
+* show themes and extensions in one Marketplace list ([4815db1](https://github.com/IPedrax/spicetify-android/commit/4815db1decfdfa09f81ab793a0118baf4cb167e4))
+* teach the player bridge errors, queue insertion and playability ([1281210](https://github.com/IPedrax/spicetify-android/commit/1281210d27b0faba72d25a2a4f4d144623cdc2a7))
+
 ## [1.0.1](https://github.com/IPedrax/spicetify-android/compare/v1.0.0...v1.0.1) (2026-09-29)
 
 ### 🐛 Bug Fixes

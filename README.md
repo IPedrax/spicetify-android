@@ -40,9 +40,9 @@ Open the link on your phone with Morphe Manager installed.
 | Local files from a server | Off | Streams an HTTPS WebDAV folder into Local Files. Needs byte-range support. Not available for root mount installs. |
 
 <!-- PATCHES_START EXPANDED -->
-> **[v1.0.1](https://github.com/IPedrax/spicetify-android/releases/tag/v1.0.1)**&nbsp;&nbsp;•&nbsp;&nbsp;`main`&nbsp;&nbsp;•&nbsp;&nbsp;4 patches total
+> **[v1.1.0](https://github.com/IPedrax/spicetify-android/releases/tag/v1.1.0)**&nbsp;&nbsp;•&nbsp;&nbsp;`main`&nbsp;&nbsp;•&nbsp;&nbsp;5 patches total
 <details open>
-<summary>📦 Spotify&nbsp;&nbsp;•&nbsp;&nbsp;4 patches</summary>
+<summary>📦 Spotify&nbsp;&nbsp;•&nbsp;&nbsp;5 patches</summary>
 <br>
 
 **🎯 Supported versions:**
@@ -56,6 +56,7 @@ Open the link on your phone with Morphe Manager installed.
 | [Clean sharing links](#clean-sharing-links) | Removes sharing identifiers and marketing parameters from open.spotify.com links. Keeps playback timestamps, context, and other parameters. |  |
 | [Local files from a server](#local-files-from-a-server) | Streams audio from an HTTPS WebDAV folder into Local Files. Configure the server in Spicetify settings. Experimental; requires byte-range support. |  |
 | [Pin shortcuts on Home](#pin-shortcuts-on-home) | Choose which of Spotify's Home shortcuts appear first in Spicetify settings. Pins are saved on this device. Restart Spotify after changing pins. |  |
+| [Spicetify extensions](#spicetify-extensions) | Adds Android versions of Spicetify extensions to the Spicetify Marketplace: Trash Bin, Play a random song, Shuffle+, Hide podcasts and Unavailable songs. Turn each one on in the Marketplace. |  |
 | [Theme colors](#theme-colors) | Adds a theme picker to Spicetify settings: presets, Material You and Spicetify themes. Requires Android 14 or later. Some hardcoded colors and animations keep Spotify's look. |  |
 
 </details>
