@@ -18,6 +18,7 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
+import java.util.Set;
 import java.util.TimeZone;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ExecutorService;
@@ -39,6 +40,15 @@ public final class Extensions {
     private static final String PREFERENCES = "spicetify_extensions";
     /** The Android extensions, in the order Spicetify settings lists their status. */
     private static final String[] IDS = {TRASH_BIN, RANDOM_SONG, SHUFFLE_PLUS, HIDE_PODCASTS, UNAVAILABLE_SONGS};
+    /**
+     * Ids hidden from {@link #isOn}, the Marketplace and Spicetify settings, though their switch may
+     * still be saved on. Package private so UnavailableSongsTest can clear it and still test the
+     * extension's own logic through a seam, not a production test hook.
+     * <p>
+     * ponytail: Unavailable songs is hidden at the user's request until removed songs have a use;
+     * remove its id from this set to bring it back.
+     */
+    static Set<String> hidden = Collections.singleton(UNAVAILABLE_SONGS);
     private static final String LOG = "spicetify_extensions.log";
     private static final int LOG_LIMIT = 256 * 1024;
     private static final int LOG_KEEP = 128 * 1024;
@@ -101,9 +111,14 @@ public final class Extensions {
         return (owner + "/" + repo + "/" + main).toLowerCase(Locale.ROOT);
     }
 
-    /** Whether the user turned extension {@code id} on; every extension starts off. */
+    /** Whether the user turned extension {@code id} on; every extension starts off, and a hidden id never is. */
     public static boolean isOn(Context context, String id) {
-        return preferences(context).getBoolean(id, false);
+        return !hidden.contains(id) && preferences(context).getBoolean(id, false);
+    }
+
+    /** Whether extension {@code id} is hidden from the Marketplace and Spicetify settings; see {@link #hidden}. */
+    public static boolean isHidden(String id) {
+        return hidden.contains(id);
     }
 
     /** Saves the switch, then tells the extension's listener. */

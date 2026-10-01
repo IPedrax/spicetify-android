@@ -62,6 +62,16 @@ public class ExtensionsTest {
     }
 
     @Test
+    public void aHiddenIdIsNeverOnEvenWhenItsSwitchIsSavedTrue() {
+        context.getSharedPreferences("spicetify_extensions", Context.MODE_PRIVATE).edit()
+                .putBoolean(Extensions.UNAVAILABLE_SONGS, true).commit();
+
+        assertFalse(Extensions.isOn(context, Extensions.UNAVAILABLE_SONGS));
+        assertTrue(Extensions.isHidden(Extensions.UNAVAILABLE_SONGS));
+        assertFalse(Extensions.isHidden(Extensions.TRASH_BIN));
+    }
+
+    @Test
     public void namesAndDescribesEachExtension() {
         assertEquals("Trash Bin", Extensions.title(Extensions.TRASH_BIN));
         assertEquals("Throw songs and artists in the trash from their menus, and Spotify skips them.",
@@ -161,13 +171,13 @@ public class ExtensionsTest {
     }
 
     @Test
-    public void enabledListsTheExtensionsThatAreOnInTheSettingsOrder() {
+    public void enabledListsTheExtensionsThatAreOnInTheSettingsOrderExceptAHiddenOne() {
         context.getSharedPreferences("spicetify_extensions", Context.MODE_PRIVATE).edit()
                 .putBoolean(Extensions.UNAVAILABLE_SONGS, true).putBoolean(Extensions.HIDE_PODCASTS, true)
                 .putBoolean(Extensions.TRASH_BIN, true).commit();
 
-        assertEquals(Arrays.asList(Extensions.TRASH_BIN, Extensions.HIDE_PODCASTS, Extensions.UNAVAILABLE_SONGS),
-                Extensions.enabled(context));
+        // Unavailable songs' switch is saved true too, but it's hidden, so enabled() leaves it out.
+        assertEquals(Arrays.asList(Extensions.TRASH_BIN, Extensions.HIDE_PODCASTS), Extensions.enabled(context));
     }
 
     @Test

@@ -15,9 +15,11 @@ import java.nio.file.Files;
 import java.time.Duration;
 import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.Collections;
 import java.util.Iterator;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.CountDownLatch;
@@ -71,9 +73,16 @@ public class UnavailableSongsTest {
     /** The two streams Unavailable songs keeps open while it's on. */
     private Request states;
     private Request errors;
+    /** {@link Extensions#hidden} as setUp found it, restored in tearDown. */
+    private Set<String> savedHidden;
 
     @Before
     public void setUp() throws Exception {
+        // Cleared through Extensions' package private seam, so the rest of this file still tests the
+        // extension's own logic as it did before it was hidden; hiddenTheHooksDoNothingEvenWithTheSavedSwitchTrue
+        // puts the real hidden set back to test the hidden behavior itself.
+        savedHidden = Extensions.hidden;
+        Extensions.hidden = Collections.emptySet();
         Extensions.setAppContext(context);
         // Off before the new router, since off forgets a tap an earlier test may have left.
         Extensions.setOn(context, Extensions.UNAVAILABLE_SONGS, false);
@@ -90,6 +99,7 @@ public class UnavailableSongsTest {
     public void tearDown() {
         webApi.release();
         Extensions.setOn(context, Extensions.UNAVAILABLE_SONGS, false);
+        Extensions.hidden = savedHidden;
     }
 
     // ---- The tap (hook B1) ----
@@ -871,6 +881,23 @@ public class UnavailableSongsTest {
         reopened.callback.onResponse(200, error(20, ORIGINAL, "not_available"));
         flushBridge();
         assertEquals("GetError 20: reasons=not_available track=" + ORIGINAL + " context=null", status());
+        assertNothingLookedUp();
+    }
+
+    // ---- Hidden ----
+
+    @Test
+    public void hiddenTheHooksDoNothingEvenWithTheSavedSwitchTrue() throws Exception {
+        Extensions.hidden = savedHidden; // the real hidden set; the switch stays saved true from setUp
+        assertFalse("saved true, but hidden", Extensions.isOn(context, Extensions.UNAVAILABLE_SONGS));
+
+        assertFalse(tap("NOT_IN_CATALOGUE", false));
+        omni(ORIGINAL, ROW, "NOT_IN_CATALOGUE", false, false, 10_000);
+        listPlay(ROW);
+        // A code 22 right after finds no list play to follow, since onListPlay kept none while hidden.
+        errors.callback.onResponse(200, skippedToNothing());
+
+        assertEquals("no list play was kept to follow", 0, router.count(PLAYLIST_GET));
         assertNothingLookedUp();
     }
 

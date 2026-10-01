@@ -708,22 +708,27 @@ public class MarketplaceScreenTest {
         assertTrue(tab(screen, "Extensions").isSelected());
         assertFalse(tab(screen, "Themes").isSelected());
         assertEquals("Search extensions", find(screen, EditText.class).getHint().toString());
-        // Each group by stars: Hide podcasts, then Trash Bin; then Visualizer, then Lyrics.
-        assertEquals(Arrays.asList("Play a random song", "Unavailable songs", "Hide Podcasts", "Trash Bin", "Visualizer",
-                "Lyrics"), titles(list.getAdapter()));
+        // Each group by stars: Hide podcasts, then Trash Bin; then Visualizer, then Lyrics. Unavailable
+        // songs is hidden, so it never joins Play a random song as a pinned card.
+        assertEquals(Arrays.asList("Play a random song", "Hide Podcasts", "Trash Bin", "Visualizer", "Lyrics"),
+                titles(list.getAdapter()));
         Marketplace.Theme random = (Marketplace.Theme) list.getAdapter().getItem(0);
         assertEquals(Marketplace.Kind.EXTENSION, random.kind);
         assertEquals(Extensions.RANDOM_SONG, random.androidId);
         assertEquals("Spicetify for Android", random.author);
         assertEquals(-1, random.stars);
         assertNull(random.previewUrl);
-        Marketplace.Theme unavailable = (Marketplace.Theme) list.getAdapter().getItem(1);
-        assertEquals(Marketplace.Kind.EXTENSION, unavailable.kind);
-        assertEquals(Extensions.UNAVAILABLE_SONGS, unavailable.androidId);
-        assertEquals(Extensions.description(Extensions.UNAVAILABLE_SONGS), unavailable.description);
-        assertEquals("Spicetify for Android", unavailable.author);
-        assertEquals(-1, unavailable.stars);
-        assertNull(unavailable.previewUrl);
+    }
+
+    @Test
+    public void theExtensionsTabHasNoUnavailableSongsCardWhileItIsHidden() {
+        putExtensions();
+        View screen = showScreen().getWindow().getDecorView();
+
+        tab(screen, "Extensions").performClick();
+
+        assertTrue(Extensions.isHidden(Extensions.UNAVAILABLE_SONGS));
+        assertFalse(titles(find(screen, ListView.class).getAdapter()).contains("Unavailable songs"));
     }
 
     @Test
@@ -758,7 +763,7 @@ public class MarketplaceScreenTest {
 
         tab(screen, "Extensions").performClick();
         assertEquals("song", search.getText().toString());
-        assertEquals(Arrays.asList("Play a random song", "Unavailable songs", "Trash Bin"), titles(list.getAdapter()));
+        assertEquals(Arrays.asList("Play a random song", "Trash Bin"), titles(list.getAdapter()));
 
         tab(screen, "Themes").performClick();
         assertEquals("song", search.getText().toString());
@@ -832,12 +837,11 @@ public class MarketplaceScreenTest {
         assertEquals(listed("Aurora", "Borealis"), themes);
         // Dusk, a theme, comes with the extensions, so the Themes tab is still loading too.
         assertTrue(themesTexts.contains("Loading themes"));
-        assertEquals(Arrays.asList("Play a random song", "Unavailable songs"), extensions);
+        assertEquals(Collections.singletonList("Play a random song"), extensions);
         assertTrue(extensionsTexts.contains("Loading extensions"));
         assertFalse(extensionsTexts.contains("No extensions found"));
         idle();
-        assertEquals(Arrays.asList("Play a random song", "Unavailable songs", "Trash Bin", "Lyrics"),
-                titles(list.getAdapter()));
+        assertEquals(Arrays.asList("Play a random song", "Trash Bin", "Lyrics"), titles(list.getAdapter()));
         assertFalse(visibleTexts(screen).contains("Loading extensions"));
         tab(screen, "Themes").performClick();
         assertEquals(listed("Aurora", "Dusk", "Borealis"), titles(list.getAdapter()));
@@ -1046,8 +1050,7 @@ public class MarketplaceScreenTest {
         button(screen, "Refresh").performClick();
         idle();
         assertFalse(visibleTexts(screen).contains(notice));
-        assertEquals(Arrays.asList("Play a random song", "Unavailable songs", "Trash Bin", "Lyrics"),
-                titles(list.getAdapter()));
+        assertEquals(Arrays.asList("Play a random song", "Trash Bin", "Lyrics"), titles(list.getAdapter()));
         tab(screen, "Themes").performClick();
         assertFalse(visibleTexts(screen).contains(notice));
         assertEquals(listed("Aurora", "Dusk", "Borealis"), titles(list.getAdapter()));

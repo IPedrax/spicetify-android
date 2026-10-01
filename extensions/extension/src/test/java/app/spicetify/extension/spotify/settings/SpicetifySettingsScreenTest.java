@@ -161,6 +161,18 @@ public class SpicetifySettingsScreenTest {
 
     @Test
     @Config(shadows = AllInstalled.class)
+    public void theExtensionsSectionNeverListsAHiddenOneEvenWithItsSwitchOn() {
+        switches().edit().putBoolean(Extensions.UNAVAILABLE_SONGS, true).putBoolean(Extensions.TRASH_BIN, true)
+                .commit();
+
+        List<String> texts = texts(page());
+
+        assertFalse(texts.contains("Unavailable songs"));
+        assertEquals("Trash Bin", texts.get(texts.indexOf("Extensions") + 1));
+    }
+
+    @Test
+    @Config(shadows = AllInstalled.class)
     public void withNoExtensionOnTheSectionSaysWhereToTurnThemOn() {
         List<String> texts = texts(page());
 
