@@ -158,8 +158,8 @@ internal val playerBridgePatch = bytecodePatch {
 val extensionsPatch = bytecodePatch(
     name = "Spicetify extensions",
     description = "Adds Android versions of Spicetify extensions to the Spicetify Marketplace: " +
-        "Trash Bin, Play a random song, Shuffle+, Hide podcasts and Unavailable songs. " +
-        "Turn each one on in the Marketplace.",
+        "Trash Bin, Play a random song, Shuffle+ and Hide podcasts. Turn each one on in the " +
+        "Marketplace's Extensions tab.",
     default = false,
 ) {
     compatibleWith(spotifyCompatibility)

@@ -35,8 +35,9 @@ private val themeResourcesPatch = resourcePatch {
 @Suppress("unused")
 val themePatch = bytecodePatch(
     name = "Theme colors",
-    description = "Adds a theme picker to Spicetify settings: presets, Material You and Spicetify themes. " +
-        "Requires Android 14 or later. Some hardcoded colors and animations keep Spotify's look.",
+    description = "Adds a Theme section to Spicetify settings, with the Spicetify Marketplace for " +
+        "presets, Galaxy V2, community themes and a way to paste your own. Requires Android 14 or " +
+        "later; some hardcoded colors and animations keep Spotify's look.",
     default = false,
 ) {
     compatibleWith(spotifyCompatibility)
