@@ -1,22 +1,46 @@
 # Theme colors
 
-The **Theme colors** patch adds a **Theme** section to Spotify's Spicetify
-settings. It needs Android 14 or later; on older Android, Spotify keeps its
-own colors.
+The **Theme colors** patch adds a **Spicetify Marketplace** button and a
+**Theme** section to Spicetify settings. It needs Android 14 or later; on
+older Android, Spicetify settings just says so, and Spotify keeps its own
+colors.
 
-Choose one of:
+## The settings page
 
-| Choice | What it does |
+Spicetify settings opens with a **Spicetify Marketplace** button, then your
+current theme: its name and a strip of its colors. Tap either to open the
+Marketplace. When the current theme has a background image, a **Blur
+background image** switch appears below it.
+
+## The Marketplace
+
+The Marketplace opens on its **Themes** tab, with an **Extensions** tab next
+to it (see [extensions](extensions.md)). The Themes tab lists, in order:
+
+| Item | What it is |
 | --- | --- |
 | Spotify default | Spotify's own colors. |
 | AMOLED black | A black background, with menus and sheets slightly lighter. |
 | Material You | Your wallpaper's palette. It updates when Spotify starts after a wallpaper change. |
 | Material You, black background | The wallpaper's accents on a black background. |
-| Spicetify Marketplace | Lists the community themes the desktop Marketplace lists (GitHub topic spicetify-themes, minus archived repositories and Marketplace's blacklist), with previews and search. Themes without a color scheme are left out. Pick a theme, then one of its color schemes. Previews and color schemes load from hosts the theme authors choose. The list is cached for 6 hours; Refresh reloads it. |
-| Paste a Spicetify theme | Paste a `color.ini`, or CSS with `--spice-*` variables. An optional accent key picks the accent from a custom key, such as Catppuccin's `mauve`. |
+| Galaxy V2 | Galaxy's colors over its own fullscreen background image, the way the desktop theme shows it. |
+| Paste a Spicetify theme | Opens the paste form below. |
+| Community themes | Everything the desktop Marketplace lists (GitHub topic spicetify-themes, minus archived repositories and Marketplace's blacklist), most stars first, with previews and search. Themes without a usable color scheme are left out. Themes with a background image on desktop bring it along. The list is cached for 6 hours; Refresh reloads it. |
 
-Applying a theme reopens the current screen. Some colors change only after
-Spotify restarts.
+Tapping a preset applies it right away. Tapping Galaxy V2 or a community
+theme downloads its colors, then opens a scheme chooser when it defines more
+than one. Previews and color schemes load from hosts the theme authors
+choose.
+
+## Pasting a theme
+
+**Paste a Spicetify theme** opens a form for a `color.ini`, or CSS with
+`--spice-*` variables, and an optional accent key that picks the accent from
+a custom key, such as Catppuccin's `mauve`.
+
+Applying a theme reopens the settings screen; a theme without a background
+image clears the previous one. Some colors change only after Spotify
+restarts.
 
 Some screens, such as Settings, and some controls, such as the Home filter
 chips, keep Spotify's colors: they use colors the theme doesn't map, or

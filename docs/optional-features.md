@@ -6,14 +6,17 @@ such as `dev.3` in Manager's **Sources** before selecting them.
 
 ## Home shortcuts
 
-Enable **Pin shortcuts on Home** when patching. Open Spotify's Home page and
-let its shortcuts load, then open **Settings and privacy > Spicetify >
-Choose pinned shortcuts**. Select shortcuts and save. Restart Spotify to
-refresh Home.
+Enable **Pin shortcuts on Home** when patching. Open **Settings and privacy
+> Spicetify > Choose pinned shortcuts**. The picker lists your whole
+library, playlists, albums and Liked Songs, with a search field. Select
+shortcuts in the order you want them and save. Restart Spotify to refresh
+Home.
 
-The patch moves selected shortcuts ahead of other shortcuts that Spotify
-supplies. It does not add a playlist absent from Spotify's current Home list.
-Saved pins remain available in the picker when temporarily absent from Home.
+Pinned shortcuts appear first on Home as real shortcut tiles with their own
+covers, even when Spotify's own Home list left them out. Turn on **Show
+only my pins** in Spicetify settings to hide Spotify's other shortcuts;
+Home still needs a shortcuts section to show them in. Saved pins remain
+available in the picker when temporarily absent from your library.
 Shortcuts use Spotify URIs as identifiers. Duplicate names show their URIs in
 the picker so you can distinguish them. You can save up to 64 pins.
 

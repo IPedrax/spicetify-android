@@ -20,6 +20,9 @@ Open the link on your phone with Morphe Manager installed.
 - **Spicetify Marketplace.** Browse the community themes the desktop
   Marketplace lists, with previews and search, and apply a color scheme in one
   tap.
+- **Four extensions, no repatching.** Trash Bin, Play a random song,
+  Shuffle+ and Hide podcasts turn on with a switch in the Marketplace's
+  Extensions tab.
 - **Background images.** Themes that have a background on desktop (Galaxy,
   Hazy, CyberNight, Sakura and others) bring it along. Galaxy V2, pinned at the
   top of the Marketplace, is Galaxy over its fullscreen image. A switch blurs
@@ -27,16 +30,17 @@ Open the link on your phone with Morphe Manager installed.
 - **More of Spotify follows the theme.** Your Library, playlist headers and
   the play buttons use the theme's colors too, not just the classic screens.
 - **Clean sharing links, Home pins and server files.** Tracking parameters
-  come off shared links, and you can pin Home shortcuts first. Local Files can
-  stream from an HTTPS WebDAV folder.
+  come off shared links, and you can pin shortcuts from your whole library
+  first on Home. Local Files can stream from an HTTPS WebDAV folder.
 
 ## Patches
 
 | Patch | Default | What it does |
 | --- | --- | --- |
 | Clean sharing links | On | Removes `si`, `pi` and known `utm_*` parameters from `open.spotify.com` links, keeping timestamps and everything else. |
-| Theme colors | Off | Adds the **Theme** section: presets, Material You, the Spicetify Marketplace and pasted themes, with background images. Android 14 or later. See [Theme colors](docs/theme.md). |
-| Pin shortcuts on Home | Off | Moves the Home shortcuts you pick to the front. |
+| Theme colors | Off | Adds a **Spicetify Marketplace** button and your current theme to Spicetify settings: presets, Galaxy V2, community themes and pasted ones. Android 14 or later. See [Theme colors](docs/theme.md). |
+| Spicetify extensions | Off | Adds Trash Bin, Play a random song, Shuffle+ and Hide podcasts to the Marketplace's Extensions tab. See [Extensions](docs/extensions.md). |
+| Pin shortcuts on Home | Off | Pins playlists, albums or Liked Songs from your library first on Home, in the order you pick them. |
 | Local files from a server | Off | Streams an HTTPS WebDAV folder into Local Files. Needs byte-range support. Not available for root mount installs. |
 
 <!-- PATCHES_START EXPANDED -->
@@ -90,11 +94,16 @@ split-APK archive, and Morphe Manager.
 ## Use it
 
 In Spotify, open your profile menu, **Settings and privacy**, then
-**Spicetify**, just above **Log out**. The **Theme** section has the presets,
-**Spicetify Marketplace** and **Paste a Spicetify theme**. Picking a theme
-reopens the screen with it; a theme without a background image clears the
-image. Clean sharing links, Home pins and server files have their own
-controls there when installed. See [optional features](docs/optional-features.md).
+**Spicetify**, just above **Log out**. With Theme colors installed, it opens
+with a **Spicetify Marketplace** button, then your current theme; tap either
+to open the Marketplace. The Marketplace's **Themes** tab has the presets,
+**Galaxy V2**, **Paste a Spicetify theme** and community themes; its
+**Extensions** tab turns on Trash Bin, Play a random song, Shuffle+ and Hide
+podcasts. Picking a theme reopens the screen with it; a theme without a
+background image clears the image. Clean sharing links, Home pins and server
+files have their own controls there when installed. See
+[extensions](docs/extensions.md) and
+[optional features](docs/optional-features.md).
 
 ## Releases
 
