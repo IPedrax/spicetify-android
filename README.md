@@ -44,7 +44,7 @@ Open the link on your phone with Morphe Manager installed.
 | Local files from a server | Off | Streams an HTTPS WebDAV folder into Local Files. Needs byte-range support. Not available for root mount installs. |
 
 <!-- PATCHES_START EXPANDED -->
-> **[v1.1.1](https://github.com/IPedrax/spicetify-android/releases/tag/v1.1.1)**&nbsp;&nbsp;•&nbsp;&nbsp;`main`&nbsp;&nbsp;•&nbsp;&nbsp;5 patches total
+> **[v1.1.2](https://github.com/IPedrax/spicetify-android/releases/tag/v1.1.2)**&nbsp;&nbsp;•&nbsp;&nbsp;`main`&nbsp;&nbsp;•&nbsp;&nbsp;5 patches total
 <details open>
 <summary>📦 Spotify&nbsp;&nbsp;•&nbsp;&nbsp;5 patches</summary>
 <br>

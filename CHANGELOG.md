@@ -1,3 +1,9 @@
+## [1.1.2](https://github.com/IPedrax/spicetify-android/compare/v1.1.1...v1.1.2) (2026-10-02)
+
+### 🐛 Bug Fixes
+
+* open the Marketplace on Android 13 and earlier, with themes disabled ([33fda19](https://github.com/IPedrax/spicetify-android/commit/33fda19908a5dc8657af81bcb01438d8dc102389))
+
 ## [1.1.1](https://github.com/IPedrax/spicetify-android/compare/v1.1.0...v1.1.1) (2026-10-01)
 
 ### 🐛 Bug Fixes
