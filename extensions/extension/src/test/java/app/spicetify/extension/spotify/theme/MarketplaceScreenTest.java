@@ -45,6 +45,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.concurrent.Executor;
 import java.util.concurrent.atomic.AtomicInteger;
+import org.junit.After;
 import org.junit.Before;
 import org.junit.Rule;
 import org.junit.Test;
@@ -110,6 +111,14 @@ public class MarketplaceScreenTest {
     public void setUp() {
         // Touch mode is the window manager's, so it would outlive the test that turns it on.
         InstrumentationRegistry.getInstrumentation().setInTouchMode(false);
+    }
+
+    @After
+    public void tearDown() {
+        // The two extensions these tests turn on. Off removes Trash Bin's bridge listener, which would
+        // otherwise open a player state stream in the next test class.
+        Extensions.setOn(context, Extensions.TRASH_BIN, false);
+        Extensions.setOn(context, Extensions.RANDOM_SONG, false);
     }
 
     private Marketplace.Fetcher fetcher() {
