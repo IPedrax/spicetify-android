@@ -131,18 +131,19 @@ public final class SpicetifySettingsScreen {
         boolean themeInstalled = InstalledPatches.themeColors();
         LinearLayout extensions = new LinearLayout(context);
         extensions.setOrientation(LinearLayout.VERTICAL);
+        Runnable onApplied = () -> {
+            // Recreating the activity reloads its resources with the new overlay.
+            dialog.dismiss();
+            host.recreate();
+        };
+        // Closing the Marketplace lists the extensions again, since one may have been switched there.
+        Runnable openMarketplace = () -> marketplace.open(context, onApplied, () -> {
+            if (InstalledPatches.extensions()) listExtensions(extensions);
+        });
+        // The Marketplace button first, on any Android version, then the current theme, which opens it too.
+        if (themeInstalled || InstalledPatches.extensions()) ThemeSection.addMarketplaceButton(content, openMarketplace);
         if (themeInstalled) {
-            Runnable onApplied = () -> {
-                // Recreating the activity reloads its resources with the new overlay.
-                dialog.dismiss();
-                host.recreate();
-            };
-            // The Marketplace button first, then the current theme. Both open the Marketplace, and
-            // closing it lists the extensions again, since one may have been switched there.
-            content.addView(ThemeSection.create(context, ThemeRuntime.supported(context), onApplied,
-                    () -> marketplace.open(context, onApplied, () -> {
-                        if (InstalledPatches.extensions()) listExtensions(extensions);
-                    })));
+            content.addView(ThemeSection.create(context, ThemeRuntime.supported(context), onApplied, openMarketplace));
         }
 
         if (InstalledPatches.extensions()) {

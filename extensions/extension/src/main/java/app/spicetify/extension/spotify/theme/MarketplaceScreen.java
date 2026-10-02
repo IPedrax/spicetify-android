@@ -10,6 +10,7 @@ import android.graphics.Color;
 import android.graphics.Typeface;
 import android.graphics.drawable.GradientDrawable;
 import android.net.Uri;
+import android.os.Build;
 import android.text.Editable;
 import android.text.TextUtils;
 import android.text.TextWatcher;
@@ -56,6 +57,7 @@ import java.util.concurrent.TimeUnit;
  * {@link ThemeSection#paste}. A tapped theme's color scheme and any background image download and go
  * to {@link ThemeSection#chooseScheme}. An extension with an Android version has a switch and a
  * dialog, which Spicetify settings opens too, and any other extension links to its GitHub page.
+ * Where no theme can apply, it opens on the Extensions tab, and each theme card is greyed and says why.
  */
 public final class MarketplaceScreen {
     private static final String BACKGROUND_COLOR = "#121212";
@@ -95,6 +97,8 @@ public final class MarketplaceScreen {
     private final Executor downloads;
     private final Marketplace.Fetcher fetcher;
     private final PreviewImages.Downloader imageFetcher;
+    /** Why no theme can apply here, as a theme card says it; null when themes apply. */
+    private final String whyNoThemes;
     private final Runnable onApplied;
     private final int rowWidthPx;
     private final Adapter adapter = new Adapter();
@@ -162,7 +166,8 @@ public final class MarketplaceScreen {
     private Marketplace.Theme downloading;
 
     private MarketplaceScreen(Context context, MarketplaceLoader loader, PreviewImages previews, Executor background,
-            Executor downloads, Marketplace.Fetcher fetcher, PreviewImages.Downloader imageFetcher, Runnable onApplied) {
+            Executor downloads, Marketplace.Fetcher fetcher, PreviewImages.Downloader imageFetcher, String whyNoThemes,
+            Runnable onApplied) {
         this.context = context;
         this.loader = loader;
         this.previews = previews;
@@ -170,6 +175,7 @@ public final class MarketplaceScreen {
         this.downloads = downloads;
         this.fetcher = fetcher;
         this.imageFetcher = imageFetcher;
+        this.whyNoThemes = whyNoThemes;
         this.onApplied = onApplied;
         this.rowWidthPx = context.getResources().getDisplayMetrics().widthPixels;
         for (String[] preset : PRESETS) {
@@ -203,7 +209,18 @@ public final class MarketplaceScreen {
         File cache = new File(context.getCacheDir(), "spicetify_marketplace.json");
         MarketplaceLoader loader = new MarketplaceLoader(Marketplace.HTTP, MANIFESTS, cache, System::currentTimeMillis);
         show(context, loader, previewImages(), BACKGROUND, DOWNLOADS, Marketplace.HTTP, PreviewImages.HTTP,
-                onApplied, onClosed);
+                whyNoThemes(context), onApplied, onClosed);
+    }
+
+    /**
+     * Why no theme can apply on this device, as a theme card says it, or null when themes apply. An old
+     * Android comes before a missing patch, since adding the patch can't fix it. Extensions work on
+     * any Android version, so the Marketplace opens either way.
+     */
+    static String whyNoThemes(Context context) {
+        boolean android14OrLater = Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE;
+        if (android14OrLater && !InstalledPatches.themeColors()) return "Needs the Theme colors patch";
+        return ThemeRuntime.supported(context) ? null : "Needs Android 14 or later";
     }
 
     /** One {@link PreviewImages} for the process, so reopening the Marketplace reuses cached thumbnails. */
@@ -222,10 +239,10 @@ public final class MarketplaceScreen {
 
     /** Loads run on {@code background} and theme downloads on {@code downloads}, so a tap never waits for a load. */
     static void show(Context context, MarketplaceLoader loader, PreviewImages previews, Executor background,
-            Executor downloads, Marketplace.Fetcher fetcher, PreviewImages.Downloader imageFetcher, Runnable onApplied,
-            Runnable onClosed) {
-        new MarketplaceScreen(context, loader, previews, background, downloads, fetcher, imageFetcher, onApplied)
-                .build(onClosed);
+            Executor downloads, Marketplace.Fetcher fetcher, PreviewImages.Downloader imageFetcher, String whyNoThemes,
+            Runnable onApplied, Runnable onClosed) {
+        new MarketplaceScreen(context, loader, previews, background, downloads, fetcher, imageFetcher, whyNoThemes,
+                onApplied).build(onClosed);
     }
 
     private void build(Runnable onClosed) {
@@ -240,7 +257,7 @@ public final class MarketplaceScreen {
         root.addView(tabRow());
         root.addView(searchField());
         root.addView(statusRow());
-        showTab(Marketplace.Kind.THEME);
+        showTab(whyNoThemes == null ? Marketplace.Kind.THEME : Marketplace.Kind.EXTENSION);
 
         list = new ListView(context);
         list.setDivider(null);
@@ -433,11 +450,14 @@ public final class MarketplaceScreen {
 
     /**
      * A preset applies, and the paste card asks for a theme to paste. A theme downloads. An extension
-     * with an Android version opens its dialog, and any other extension opens its GitHub page.
+     * with an Android version opens its dialog, and any other extension opens its GitHub page. Where no
+     * theme can apply, a theme card only says why.
      */
     private void openItem(Marketplace.Theme item) {
         String preset = presets.get(item);
-        if (preset != null) {
+        if (item.kind == Marketplace.Kind.THEME && whyNoThemes != null) {
+            Toast.makeText(context, whyNoThemes, Toast.LENGTH_SHORT).show();
+        } else if (preset != null) {
             ThemeSection.apply(context, ThemeState.Selection.preset(preset, item.title), null, this::applied);
         } else if (item == paste) {
             ThemeSection.paste(context, this::applied);
@@ -617,9 +637,15 @@ public final class MarketplaceScreen {
 
     /**
      * Colors {@code strip} with {@code theme}'s roles. A role the theme leaves out keeps Spotify's own
-     * color, and a see-through one shows whole, since a strip has no image behind it.
+     * color, and a see-through one shows whole, since a strip has no image behind it. Material You's
+     * colors come with Android 12, so before it, its strip is hidden.
      */
     static void paintStrip(LinearLayout strip, ThemeState.Selection theme) {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.S && (ThemePresets.MATERIAL_YOU.equals(theme.kind)
+                || ThemePresets.MATERIAL_YOU_BLACK.equals(theme.kind))) {
+            strip.setVisibility(View.GONE);
+            return;
+        }
         Map<String, Integer> roles = ThemeRuntime.roleColors(strip.getContext(), theme);
         for (int i = 0; i < STRIP_ROLES.length; i++) {
             strip.getChildAt(i).setBackgroundColor(roles.getOrDefault(STRIP_ROLES[i], STOCK_STRIP[i]) | 0xFF000000);
@@ -678,6 +704,10 @@ public final class MarketplaceScreen {
             if (theme.androidId != null) {
                 bindSwitch(context, row.toggle, theme.androidId, adapter::notifyDataSetChanged);
             }
+            boolean off = theme.kind == Marketplace.Kind.THEME && whyNoThemes != null;
+            row.view.setAlpha(off ? 0.5f : 1f);
+            row.whyOff.setText(whyNoThemes);
+            row.whyOff.setVisibility(off ? View.VISIBLE : View.GONE);
             return row.view;
         }
     }
@@ -692,6 +722,8 @@ public final class MarketplaceScreen {
         final Switch toggle;
         final TextView subtitle;
         final TextView description;
+        /** Why a theme card is greyed: no theme can apply here. */
+        final TextView whyOff;
 
         Row(Context context) {
             LinearLayout root = new LinearLayout(context);
@@ -730,6 +762,11 @@ public final class MarketplaceScreen {
             description.setMaxLines(2);
             description.setEllipsize(TextUtils.TruncateAt.END);
             root.addView(description);
+
+            whyOff = new TextView(context);
+            whyOff.setTextColor(Color.WHITE);
+            whyOff.setTextSize(13);
+            root.addView(whyOff);
 
             root.setTag(this);
             view = root;

@@ -4,6 +4,7 @@ import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertNotNull;
 import static org.junit.Assert.assertNull;
+import static org.junit.Assert.assertSame;
 import static org.junit.Assert.assertTrue;
 
 import android.app.Activity;
@@ -11,9 +12,12 @@ import android.app.AlertDialog;
 import android.app.Dialog;
 import android.content.Context;
 import android.content.SharedPreferences;
+import android.graphics.Color;
+import android.graphics.Typeface;
 import android.os.Looper;
 import android.view.View;
 import android.view.ViewGroup;
+import android.widget.Button;
 import android.widget.ListView;
 import android.widget.Switch;
 import android.widget.TextView;
@@ -21,6 +25,7 @@ import app.spicetify.extension.spotify.extensions.Extensions;
 import app.spicetify.extension.spotify.extensions.ExtensionsTest;
 import app.spicetify.extension.spotify.extensions.PlayerBridgeTest;
 import app.spicetify.extension.spotify.theme.MarketplaceScreenTest;
+import app.spicetify.extension.spotify.theme.ThemeRuntime;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
@@ -52,6 +57,18 @@ public class SpicetifySettingsScreenTest {
         @Implementation public static boolean extensions() { return true; }
     }
 
+    /** Only the extensions patch, installed. */
+    @Implements(value = InstalledPatches.class, isInAndroidSdk = false)
+    public static class OnlyExtensions {
+        @Implementation public static boolean extensions() { return true; }
+    }
+
+    /** A device where in-app themes can't apply, as on Android 13 and older. */
+    @Implements(value = ThemeRuntime.class, isInAndroidSdk = false)
+    public static class ThemesUnsupported {
+        @Implementation public static boolean supported(Context context) { return false; }
+    }
+
     @Before
     public void setUp() {
         // The player bridge is process-wide, so each test starts with it connected and nothing wrong.
@@ -77,6 +94,7 @@ public class SpicetifySettingsScreenTest {
         // An unpatched extension reports no installed patches.
         assertTrue(texts.contains("No configurable Spicetify patches are installed."));
         assertFalse(texts.contains("Clean sharing links"));
+        assertFalse(texts.contains("Spicetify Marketplace"));
     }
 
     @Test
@@ -124,6 +142,52 @@ public class SpicetifySettingsScreenTest {
         // The sharing switch kept its description.
         assertTrue(texts.get(texts.indexOf("Clean sharing links") + 1).startsWith("Remove tracking parameters"));
         assertFalse(texts.contains("No configurable Spicetify patches are installed."));
+    }
+
+    @Test
+    @Config(shadows = OnlyExtensions.class)
+    public void withOnlyTheExtensionsPatchTheMarketplaceButtonOpensTheMarketplaceOnItsExtensionsTab() {
+        SpicetifySettingsScreen.open(activity, MarketplaceScreenTest::showOffline);
+        View page = ShadowDialog.getLatestDialog().getWindow().getDecorView();
+
+        // The Marketplace button tops the page as it does with Theme colors, and no Theme section follows.
+        List<String> texts = texts(page);
+        int title = texts.indexOf("Spicetify");
+        assertEquals(Arrays.asList("Spicetify Marketplace", "Extensions"), texts.subList(title + 1, title + 3));
+        assertFalse(texts.contains("Theme"));
+        Button button = (Button) labeled(page, "Spicetify Marketplace");
+        assertEquals(0xFF1ED760, button.getBackgroundTintList().getDefaultColor()); // Spotify's green
+        assertEquals(Color.BLACK, button.getCurrentTextColor());
+        assertSame(Typeface.DEFAULT_BOLD, button.getTypeface());
+
+        button.performClick();
+
+        // Themes need the Theme colors patch, so it opens where the extensions are, and theme cards say so.
+        View marketplace = ShadowDialog.getLatestDialog().getWindow().getDecorView();
+        assertTrue(labeled(marketplace, "Extensions").isSelected());
+        labeled(marketplace, "Themes").performClick();
+        ListView list = find(marketplace, ListView.class);
+        assertTrue(texts(list.getAdapter().getView(0, null, list)).contains("Needs the Theme colors patch"));
+    }
+
+    @Test
+    @Config(shadows = {AllInstalled.class, ThemesUnsupported.class})
+    public void whereThemesCantApplyTheMarketplaceButtonStillOpensTheMarketplaceOnItsExtensionsTab() {
+        SpicetifySettingsScreen.open(activity, MarketplaceScreenTest::showOffline);
+        View page = ShadowDialog.getLatestDialog().getWindow().getDecorView();
+
+        List<String> texts = texts(page);
+        int title = texts.indexOf("Spicetify");
+        assertEquals(Arrays.asList("Spicetify Marketplace", "Theme", "In-app themes need Android 14 or later.",
+                "Extensions"), texts.subList(title + 1, title + 5));
+
+        labeled(page, "Spicetify Marketplace").performClick();
+
+        View marketplace = ShadowDialog.getLatestDialog().getWindow().getDecorView();
+        assertTrue(labeled(marketplace, "Extensions").isSelected());
+        labeled(marketplace, "Themes").performClick();
+        ListView list = find(marketplace, ListView.class);
+        assertTrue(texts(list.getAdapter().getView(0, null, list)).contains("Needs Android 14 or later"));
     }
 
     @Test

@@ -31,22 +31,27 @@ public final class ThemeSection {
     private ThemeSection() {}
 
     /**
-     * The Marketplace button, then the current theme, and the blur switch while an image is set. On
-     * Android 13 and older, only why there are no themes.
+     * The Marketplace button, in Spotify's green. It shows on any Android version, since the
+     * Marketplace's Extensions tab is where extensions turn on.
+     */
+    public static void addMarketplaceButton(LinearLayout page, Runnable openMarketplace) {
+        Button marketplace = addButton(page, "Spicetify Marketplace", openMarketplace);
+        marketplace.setBackgroundTintList(ColorStateList.valueOf(MarketplaceScreen.GREEN));
+        marketplace.setTextColor(Color.BLACK);
+        marketplace.setTypeface(null, Typeface.BOLD);
+    }
+
+    /**
+     * The current theme, and the blur switch while an image is set. On Android 13 and older, only
+     * why there are no themes.
      *
      * @param context         the settings screen's themed context
      * @param onApplied       runs after a theme was applied, to close the screen and recreate Spotify's activity
-     * @param openMarketplace opens the Marketplace, which starts on its Themes tab
+     * @param openMarketplace opens the Marketplace, which the current theme does when tapped
      */
     public static View create(Context context, boolean supported, Runnable onApplied, Runnable openMarketplace) {
         LinearLayout section = new LinearLayout(context);
         section.setOrientation(LinearLayout.VERTICAL);
-        if (supported) {
-            Button marketplace = addButton(section, "Spicetify Marketplace", openMarketplace);
-            marketplace.setBackgroundTintList(ColorStateList.valueOf(MarketplaceScreen.GREEN));
-            marketplace.setTextColor(Color.BLACK);
-            marketplace.setTypeface(null, Typeface.BOLD);
-        }
         section.addView(SpicetifySettingsScreen.text(context, "Theme", true));
         if (!supported) {
             section.addView(SpicetifySettingsScreen.text(

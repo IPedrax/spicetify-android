@@ -47,12 +47,12 @@ public class ThemeSectionTest {
     }
 
     @Test
-    public void showsTheMarketplaceButtonThenOnlyTheCurrentTheme() {
+    public void showsOnlyTheCurrentTheme() {
         View section = ThemeSection.create(context, true, () -> {}, () -> {});
 
-        assertEquals(Arrays.asList("Spicetify Marketplace", "Theme", "Spotify default",
-                "Some colors change after Spotify restarts."), texts(section));
-        assertTrue(((ViewGroup) section).getChildAt(0) instanceof Button);
+        // The Marketplace button is the settings page's own, above this section.
+        assertEquals(Arrays.asList("Theme", "Spotify default", "Some colors change after Spotify restarts."),
+                texts(section));
         // Spotify's own colors, as on the Marketplace's Spotify default card.
         assertEquals(Arrays.asList(0xFF121212, 0xFF282828, 0xFF1ED760, 0xFFFFFFFF),
                 MarketplaceScreenTest.colorBlocks(section));
@@ -89,15 +89,12 @@ public class ThemeSectionTest {
     }
 
     @Test
-    public void theMarketplaceButtonAndTheCurrentThemeOpenTheMarketplace() {
+    public void theCurrentThemeOpensTheMarketplace() {
         AtomicInteger opened = new AtomicInteger();
         View section = ThemeSection.create(context, true, () -> {}, opened::incrementAndGet);
 
-        button(section, "Spicetify Marketplace").performClick();
-        assertEquals(1, opened.get());
-
         ((View) labeled(section, "Spotify default").getParent()).performClick();
-        assertEquals(2, opened.get());
+        assertEquals(1, opened.get());
     }
 
     @Test

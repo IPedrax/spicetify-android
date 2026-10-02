@@ -97,6 +97,8 @@ public class MarketplaceScreenTest {
     private PreviewImages.Downloader images = url -> {
         throw new IOException("no images in tests");
     };
+    /** Why no theme can apply, as the screen is told it; null, so themes apply, unless a test sets it. */
+    private String whyNoThemes;
     /** Every URL the fetcher was asked for, in order; a test's image fetcher can add its own. */
     private final List<String> requested = new ArrayList<>();
     /** Work the fetcher does when it's asked for a URL, before it answers; each runs once. */
@@ -156,8 +158,8 @@ public class MarketplaceScreenTest {
     private Dialog showScreen() {
         File cache = new File(tempFolder.getRoot(), "cache.json");
         MarketplaceLoader loader = new MarketplaceLoader(fetcher(), DIRECT, cache, () -> 0L);
-        MarketplaceScreen.show(screenContext, loader, previews, background, downloads, fetcher(), images, () -> {},
-                closed::incrementAndGet);
+        MarketplaceScreen.show(screenContext, loader, previews, background, downloads, fetcher(), images, whyNoThemes,
+                () -> {}, closed::incrementAndGet);
         idle();
         return ShadowDialog.getLatestDialog();
     }
@@ -168,7 +170,8 @@ public class MarketplaceScreenTest {
 
     /**
      * Shows the Marketplace with nothing to load and no network, so only its built-in cards; for tests
-     * in other packages, such as Spicetify settings'. It has the shape of {@link MarketplaceScreen#open}.
+     * in other packages, such as Spicetify settings'. It has the shape of {@link MarketplaceScreen#open},
+     * and asks whether themes apply the same way.
      */
     public static void showOffline(Context context, Runnable onApplied, Runnable onClosed) {
         Marketplace.Fetcher offline = url -> {
@@ -179,7 +182,8 @@ public class MarketplaceScreenTest {
         };
         File cache = new File(context.getCacheDir(), "offline_marketplace.json");
         MarketplaceScreen.show(context, new MarketplaceLoader(offline, DIRECT, cache, () -> 0L),
-                new PreviewImages(noImages, DIRECT), DIRECT, DIRECT, offline, noImages, onApplied, onClosed);
+                new PreviewImages(noImages, DIRECT), DIRECT, DIRECT, offline, noImages,
+                MarketplaceScreen.whyNoThemes(context), onApplied, onClosed);
     }
 
     private static void tap(ListView list, int position) {
@@ -675,6 +679,9 @@ public class MarketplaceScreenTest {
         assertEquals("Search themes", find(screen, EditText.class).getHint().toString());
         // The presets and Galaxy V2, then the themes by stars, Dusk from the extensions search among them.
         assertEquals(listed("Aurora", "Dusk", "Borealis"), titles(list.getAdapter()));
+        // Themes apply here, so no card is greyed.
+        assertEquals(1f, row(list, "AMOLED black").getAlpha(), 0f);
+        assertEquals(1f, row(list, "Aurora").getAlpha(), 0f);
 
         // Search filters the pinned cards like the rest.
         find(screen, EditText.class).setText("black");
@@ -1054,6 +1061,118 @@ public class MarketplaceScreenTest {
         tab(screen, "Themes").performClick();
         assertFalse(visibleTexts(screen).contains(notice));
         assertEquals(listed("Aurora", "Dusk", "Borealis"), titles(list.getAdapter()));
+    }
+
+    @Test
+    public void whereThemesCantApplyItOpensOnExtensionsAndEveryThemeCardIsGreyedWithWhy() {
+        putTwoThemes();
+        putExtensions();
+        whyNoThemes = "Needs Android 14 or later";
+        View screen = showScreen().getWindow().getDecorView();
+        ListView list = find(screen, ListView.class);
+
+        // It opens where the extensions are, and lists them as before.
+        assertTrue(tab(screen, "Extensions").isSelected());
+        assertFalse(tab(screen, "Themes").isSelected());
+        assertEquals("Search extensions", find(screen, EditText.class).getHint().toString());
+        assertEquals(Arrays.asList("Play a random song", "Trash Bin", "Lyrics"), titles(list.getAdapter()));
+
+        // The Themes tab still lists every theme, each card greyed and saying why.
+        tab(screen, "Themes").performClick();
+        assertEquals(listed("Aurora", "Dusk", "Borealis"), titles(list.getAdapter()));
+        for (String title : listed("Aurora", "Dusk", "Borealis")) {
+            View card = row(list, title);
+            assertTrue(title, card.getAlpha() < 1f);
+            assertTrue(title, visibleTexts(card).contains("Needs Android 14 or later"));
+        }
+
+        // A theme card's row, reused for an extension, is whole again and says nothing of themes.
+        View reused = row(list, "Aurora");
+        tab(screen, "Extensions").performClick();
+        View trash = list.getAdapter().getView(position(list, "Trash Bin"), reused, list);
+        assertSame(reused, trash);
+        assertEquals(1f, trash.getAlpha(), 0f);
+        assertFalse(visibleTexts(trash).contains("Needs Android 14 or later"));
+
+        // Search still works on the Themes tab.
+        tab(screen, "Themes").performClick();
+        find(screen, EditText.class).setText("black");
+        assertEquals(Arrays.asList("AMOLED black", "Material You, black background"), titles(list.getAdapter()));
+    }
+
+    @Test
+    public void tappingAThemeCardThatCantApplySaysWhyAndDownloadsOrAppliesNothing() throws IOException {
+        putTwoThemes();
+        responses.put(Marketplace.resolve("color.ini", REPO_A, "main"), GALAXY_COLOR_INI);
+        responses.put(Marketplace.GALAXY_V2.schemesUrl, GALAXY_COLOR_INI);
+        List<Runnable> themeDownloads = new ArrayList<>();
+        downloads = themeDownloads::add;
+        ThemeBackground.save(context, ThemeBackgroundTest.png()); // from the theme before, which a preset clears
+        whyNoThemes = "Needs the Theme colors patch";
+        View screen = showScreen().getWindow().getDecorView();
+        ListView list = find(screen, ListView.class);
+        tab(screen, "Themes").performClick();
+
+        List<String> tapped = Arrays.asList("AMOLED black", "Galaxy V2", "Paste a Spicetify theme", "Aurora");
+        for (String title : tapped) {
+            tap(list, position(list, title));
+            assertEquals(title, "Needs the Theme colors patch", ShadowToast.getTextOfLatestToast());
+        }
+        idle();
+
+        assertEquals(tapped.size(), ShadowToast.shownToastCount());
+        assertTrue(themeDownloads.isEmpty());
+        assertNull(ShadowAlertDialog.getLatestAlertDialog()); // no paste form, scheme chooser or error
+        assertTrue(ThemeBackground.hasImage(context));
+        assertEquals(ThemePresets.STOCK, ThemeState.load(context).kind);
+    }
+
+    @Test
+    @Config(sdk = 30)
+    public void belowAndroid14AThemeCardAndItsToastNameAndroidEvenWithoutTheThemeColorsPatch() {
+        assertFalse(InstalledPatches.themeColors()); // unpatched, as in every test
+
+        assertThemeCardAndToastSay("Needs Android 14 or later");
+    }
+
+    @Test
+    public void onAndroid14WithoutTheThemeColorsPatchAThemeCardAndItsToastNameThePatch() {
+        assertFalse(InstalledPatches.themeColors()); // unpatched, as in every test
+
+        assertThemeCardAndToastSay("Needs the Theme colors patch");
+    }
+
+    /**
+     * Opens the Marketplace told what {@link MarketplaceScreen#open} would tell it here, and checks that a
+     * theme card and its Toast both say {@code why}.
+     */
+    private void assertThemeCardAndToastSay(String why) {
+        putTwoThemes();
+        whyNoThemes = MarketplaceScreen.whyNoThemes(context);
+        View screen = showScreen().getWindow().getDecorView();
+        ListView list = find(screen, ListView.class);
+        tab(screen, "Themes").performClick();
+
+        assertTrue(visibleTexts(row(list, "Aurora")).contains(why));
+        tap(list, position(list, "Aurora"));
+        assertEquals(why, ShadowToast.getTextOfLatestToast());
+    }
+
+    @Test
+    @Config(sdk = 30)
+    public void belowAndroid12AMaterialYouCardShowsNoStripInsteadOfThrowing() {
+        putTwoThemes();
+        whyNoThemes = "Needs Android 14 or later"; // as Android 11 is told
+        View screen = showScreen().getWindow().getDecorView();
+        ListView list = find(screen, ListView.class);
+        tab(screen, "Themes").performClick();
+        View amoled = row(list, "AMOLED black");
+        assertEquals(Arrays.asList(0xFF000000, 0xFF282828, 0xFF1ED760, 0xFFFFFFFF), colorBlocks(amoled));
+
+        // Android 11 has no wallpaper palette to read. Even the row that showed AMOLED black's strip shows none.
+        assertEquals(Collections.emptyList(),
+                colorBlocks(list.getAdapter().getView(position(list, "Material You"), amoled, list)));
+        assertEquals(Collections.emptyList(), colorBlocks(row(list, "Material You, black background")));
     }
 
     private static String dataUri(byte[] png) {
