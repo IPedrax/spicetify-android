@@ -1,21 +1,25 @@
 # Theme colors
 
 The **Theme colors** patch adds a **Spicetify Marketplace** button and a
-**Theme** section to Spicetify settings. It needs Android 14 or later; on
-older Android, Spicetify settings just says so, and Spotify keeps its own
-colors.
+**Theme** section to Spicetify settings. Themes need Android 14 or later. On
+older Android, the Theme section just says so, Spotify keeps its own colors,
+and the Marketplace still opens, on its **Extensions** tab.
 
 ## The settings page
 
-Spicetify settings opens with a **Spicetify Marketplace** button, then your
-current theme: its name and a strip of its colors. Tap either to open the
-Marketplace. When the current theme has a background image, a **Blur
-background image** switch appears below it.
+Spicetify settings opens with a **Spicetify Marketplace** button whenever
+Theme colors or Spicetify extensions is installed, on any Android version. With
+Theme colors on Android 14 or later, your current theme comes next: its name
+and a strip of its colors. Tap either to open the Marketplace. When the
+current theme has a background image, a **Blur background image** switch
+appears below it. On older Android, the **Theme** section only says that
+themes need Android 14 or later.
 
 ## The Marketplace
 
-The Marketplace opens on its **Themes** tab, with an **Extensions** tab next
-to it (see [extensions](extensions.md)). The Themes tab lists, in order:
+Where themes apply, the Marketplace opens on its **Themes** tab, with an
+**Extensions** tab next to it (see [extensions](extensions.md)). The Themes
+tab lists, in order:
 
 | Item | What it is |
 | --- | --- |
@@ -31,6 +35,12 @@ Tapping a preset applies it right away. Tapping Galaxy V2 or a community
 theme downloads its colors, then opens a scheme chooser when it defines more
 than one. Previews and color schemes load from hosts the theme authors
 choose.
+
+Below Android 14, every theme card is disabled and says **Needs Android 14 or
+later**, tapping one only shows that message, and the Marketplace opens on its
+**Extensions** tab instead, where extensions work normally. On Android 14 or
+later with only the Spicetify extensions patch installed, the cards are
+disabled the same way and say **Needs the Theme colors patch**.
 
 ## Pasting a theme
 
